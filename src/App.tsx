@@ -19,6 +19,12 @@ const STARTER_SLIM = `// SlimML sample
   ~.actions
     @[/docs g=_blank].btn Docs
     $[t=button].btn.btn-ghost Try playground
+  +.menu [*class=nav-item]
+    * Home
+    * About
+  ?
+    |[n=email p="Your email" required]
+    $ Subscribe
   ~.cards
     ~.card[data-kind=cost]
       h3 Token savings
@@ -35,6 +41,14 @@ const STARTER_HTML = `<div id="home" class="page" data-theme="light">
     <a class="btn" href="/docs" target="_blank">Docs</a>
     <button class="btn btn-ghost" type="button">Try playground</button>
   </div>
+  <ul class="menu">
+    <li class="nav-item">Home</li>
+    <li class="nav-item">About</li>
+  </ul>
+  <form>
+    <input name="email" placeholder="Your email" required type="text">
+    <button type="submit">Subscribe</button>
+  </form>
   <div class="cards">
     <div class="card" data-kind="cost">
       <h3>Token savings</h3>
@@ -164,7 +178,7 @@ function App() {
         <h1>SlimML Bidirectional Playground</h1>
         <p className="subtitle">
           Edit both sources freely. Convert in either direction and apply
-          lossless compact compression with alias rules.
+          lossless compact compression with aliases, defaults, and inheritance.
         </p>
 
         <div className="stats-grid" role="list" aria-label="Compression metrics">
@@ -297,6 +311,14 @@ function App() {
           <article>
             <h3>Attr Aliases</h3>
             <p>h href, s src, a alt, t type, g target, p placeholder</p>
+          </article>
+          <article>
+            <h3>Implicit Defaults</h3>
+            <p>| means input type=text, and button in form defaults to submit</p>
+          </article>
+          <article>
+            <h3>Child Inheritance</h3>
+            <p>Use +.menu [*class=nav-item] to style repeated li children once</p>
           </article>
           <article>
             <h3>Positional Attr</h3>

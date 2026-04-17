@@ -12,9 +12,15 @@ export interface SlimElementNode {
   id?: string
   classes: string[]
   attrs: Record<string, SlimAttributeValue>
+  childDefaults?: Record<string, SlimChildDefaultRule>
   text?: string
   children: SlimNode[]
   line: number
+}
+
+export interface SlimChildDefaultRule {
+  classes: string[]
+  attrs: Record<string, SlimAttributeValue>
 }
 
 export type SlimNode = SlimTextNode | SlimElementNode
@@ -119,6 +125,8 @@ const ATTR_TO_ALIAS: Record<string, string> = {
   value: 'v',
   target: 'g',
   rel: 'r',
+  class: 'c',
+  id: 'i',
 }
 
 const COMMON_INPUT_TYPES = new Set([
@@ -208,6 +216,91 @@ function resolveAttributeName(name: string): string {
   return ATTR_ALIASES[name] ?? name
 }
 
+function parseAttributeValue(
+  name: string,
+  rawValue: string,
+): SlimAttributeValue {
+  const value = stripQuotes(rawValue)
+  const lowerName = name.toLowerCase()
+
+  if (BOOLEAN_ATTRIBUTES.has(lowerName)) {
+    const lowered = value.toLowerCase()
+    if (lowered === 'true') {
+      return true
+    }
+    if (lowered === 'false') {
+      return false
+    }
+  }
+
+  return value
+}
+
+function ensureChildDefaultRule(
+  node: SlimElementNode,
+  childTag: string,
+): SlimChildDefaultRule {
+  if (!node.childDefaults) {
+    node.childDefaults = {}
+  }
+
+  const key = childTag.toLowerCase()
+  if (!node.childDefaults[key]) {
+    node.childDefaults[key] = {
+      classes: [],
+      attrs: {},
+    }
+  }
+
+  return node.childDefaults[key]
+}
+
+function tryApplyChildDefaultToken(
+  token: string,
+  node: SlimElementNode,
+  line: number,
+): boolean {
+  if (!token) {
+    return false
+  }
+
+  const firstChar = token[0]
+  const childTag = ALIAS_TAGS[firstChar]
+  if (!childTag) {
+    return false
+  }
+
+  const eqIndex = token.indexOf('=')
+  const rawName = (eqIndex === -1 ? token.slice(1) : token.slice(1, eqIndex)).trim()
+  if (!rawName) {
+    throw new ParserIssue('Child inheritance token is missing an attribute name.', line, 1)
+  }
+
+  const outputName = resolveAttributeName(rawName)
+  const rule = ensureChildDefaultRule(node, childTag)
+
+  if (eqIndex === -1) {
+    if (outputName === 'class') {
+      return true
+    }
+    rule.attrs[outputName] = true
+    return true
+  }
+
+  const rawValue = token.slice(eqIndex + 1).trim()
+  const value = parseAttributeValue(outputName, rawValue)
+
+  if (outputName === 'class') {
+    if (typeof value === 'string' && value.length > 0) {
+      rule.classes.push(...value.split(/\s+/).filter(Boolean))
+    }
+    return true
+  }
+
+  rule.attrs[outputName] = value
+  return true
+}
+
 function isLikelyAttributeName(name: string): boolean {
   return /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/.test(name)
 }
@@ -253,6 +346,15 @@ function splitDeclarationAndText(line: string): {
     }
 
     if (char === ' ' && bracketDepth === 0) {
+      let lookAhead = i
+      while (lookAhead < line.length && line[lookAhead] === ' ') {
+        lookAhead += 1
+      }
+
+      if (line[lookAhead] === '[') {
+        continue
+      }
+
       const declaration = line.slice(0, i)
       const text = line.slice(i + 1)
       return {
@@ -324,6 +426,10 @@ function applyAttributeToken(
   node: SlimElementNode,
   line: number,
 ): void {
+  if (tryApplyChildDefaultToken(token, node, line)) {
+    return
+  }
+
   const compactValue = stripQuotes(token)
   if (
     node.tag === 'a' &&
@@ -392,17 +498,17 @@ function applyAttributeToken(
   }
 
   const name = resolveAttributeName(rawName)
-  const value = stripQuotes(rawValue)
+  const value = parseAttributeValue(name, rawValue)
 
   if (name === 'class') {
-    if (value) {
+    if (typeof value === 'string' && value) {
       node.classes.push(...value.split(/\s+/).filter(Boolean))
     }
     return
   }
 
   if (name === 'id') {
-    if (value) {
+    if (typeof value === 'string' && value) {
       node.id = value
     }
     return
@@ -465,6 +571,11 @@ function parseElementDeclaration(
 
   while (index < declaration.length) {
     const char = declaration[index]
+
+    if (/\s/.test(char)) {
+      index += 1
+      continue
+    }
 
     if (char === '.') {
       index += 1
@@ -675,18 +786,98 @@ function escapeAttribute(value: string): string {
   return escapeHtml(value).replaceAll('"', '&quot;')
 }
 
-function serializeAttributes(node: SlimElementNode): string {
+interface EffectiveElementContext {
+  id?: string
+  classes: string[]
+  attrs: Record<string, SlimAttributeValue>
+}
+
+function getInheritedChildRule(
+  parent: SlimElementNode | undefined,
+  childTag: string,
+): SlimChildDefaultRule | undefined {
+  if (!parent?.childDefaults) {
+    return undefined
+  }
+  return parent.childDefaults[childTag.toLowerCase()]
+}
+
+function resolveEffectiveElementContext(
+  node: SlimElementNode,
+  parent?: SlimElementNode,
+): EffectiveElementContext {
+  const inherited = getInheritedChildRule(parent, node.tag)
+  const classes = [...node.classes]
+  const attrs: Record<string, SlimAttributeValue> = { ...node.attrs }
+  let id = node.id
+
+  if (inherited) {
+    for (const className of inherited.classes) {
+      if (!classes.includes(className)) {
+        classes.push(className)
+      }
+    }
+
+    for (const [name, value] of Object.entries(inherited.attrs)) {
+      if (name === 'id') {
+        if (!id && typeof value === 'string') {
+          id = value
+        }
+        continue
+      }
+
+      if (name === 'class') {
+        if (typeof value === 'string') {
+          for (const className of value.split(/\s+/).filter(Boolean)) {
+            if (!classes.includes(className)) {
+              classes.push(className)
+            }
+          }
+        }
+        continue
+      }
+
+      if (attrs[name] === undefined) {
+        attrs[name] = value
+      }
+    }
+  }
+
+  if (node.tag.toLowerCase() === 'input' && attrs.type === undefined) {
+    attrs.type = 'text'
+  }
+
+  if (
+    node.tag.toLowerCase() === 'button' &&
+    parent?.tag.toLowerCase() === 'form' &&
+    attrs.type === undefined
+  ) {
+    attrs.type = 'submit'
+  }
+
+  return {
+    id,
+    classes,
+    attrs,
+  }
+}
+
+function serializeAttributes(
+  node: SlimElementNode,
+  parent?: SlimElementNode,
+): string {
+  const effective = resolveEffectiveElementContext(node, parent)
   const attrs: Array<[string, SlimAttributeValue]> = []
 
-  if (node.id) {
-    attrs.push(['id', node.id])
+  if (effective.id) {
+    attrs.push(['id', effective.id])
   }
 
-  if (node.classes.length > 0) {
-    attrs.push(['class', node.classes.join(' ')])
+  if (effective.classes.length > 0) {
+    attrs.push(['class', effective.classes.join(' ')])
   }
 
-  for (const [name, value] of Object.entries(node.attrs)) {
+  for (const [name, value] of Object.entries(effective.attrs)) {
     attrs.push([name, value])
   }
 
@@ -705,14 +896,18 @@ function serializeAttributes(node: SlimElementNode): string {
     .join(' ')
 }
 
-function emitNodeToHtml(node: SlimNode, depth: number): string {
+function emitNodeToHtml(
+  node: SlimNode,
+  depth: number,
+  parent?: SlimElementNode,
+): string {
   const indent = '  '.repeat(depth)
 
   if (node.type === 'text') {
     return `${indent}${escapeHtml(node.value)}\n`
   }
 
-  const attrs = serializeAttributes(node)
+  const attrs = serializeAttributes(node, parent)
   const attrSegment = attrs ? ` ${attrs}` : ''
   const tagName = node.tag
   const tagIsVoid = VOID_TAGS.has(tagName.toLowerCase())
@@ -736,7 +931,7 @@ function emitNodeToHtml(node: SlimNode, depth: number): string {
   }
 
   for (const child of node.children) {
-    html += emitNodeToHtml(child, depth + 1)
+    html += emitNodeToHtml(child, depth + 1, node)
   }
 
   html += `${indent}</${tagName}>\n`
@@ -773,6 +968,7 @@ function flattenInlineText(node: SlimElementNode): string | undefined {
 
 function emitElementDeclaration(
   node: SlimElementNode,
+  parent: SlimElementNode | undefined,
   compact: boolean,
 ): string {
   const tagToken = compact ? TAG_TO_ALIAS[node.tag] ?? node.tag : node.tag
@@ -788,6 +984,17 @@ function emitElementDeclaration(
 
   const tokens: string[] = []
   const attrs = { ...node.attrs }
+
+  const isDefaultInputTextType =
+    node.tag.toLowerCase() === 'input' && attrs.type === 'text'
+  const isDefaultFormSubmitType =
+    node.tag.toLowerCase() === 'button' &&
+    parent?.tag.toLowerCase() === 'form' &&
+    attrs.type === 'submit'
+
+  if (compact && (isDefaultInputTextType || isDefaultFormSubmitType)) {
+    delete attrs.type
+  }
 
   if (compact && typeof attrs.href === 'string' && node.tag === 'a') {
     tokens.push(quoteSlimValue(attrs.href))
@@ -812,6 +1019,30 @@ function emitElementDeclaration(
     tokens.push(`${outputName}=${quoteSlimValue(value)}`)
   }
 
+  if (node.childDefaults) {
+    for (const [childTag, rule] of Object.entries(node.childDefaults)) {
+      const childToken = compact ? TAG_TO_ALIAS[childTag] ?? childTag : childTag
+
+      for (const className of rule.classes) {
+        const classToken = compact ? ATTR_TO_ALIAS.class : 'class'
+        tokens.push(`${childToken}${classToken}=${quoteSlimValue(className)}`)
+      }
+
+      for (const [name, value] of Object.entries(rule.attrs)) {
+        const outputName = compact ? ATTR_TO_ALIAS[name] ?? name : name
+
+        if (typeof value === 'boolean') {
+          if (value) {
+            tokens.push(`${childToken}${outputName}`)
+          }
+          continue
+        }
+
+        tokens.push(`${childToken}${outputName}=${quoteSlimValue(value)}`)
+      }
+    }
+  }
+
   if (tokens.length > 0) {
     declaration += `[${tokens.join(' ')}]`
   }
@@ -823,6 +1054,7 @@ function emitNodeToSlim(
   node: SlimNode,
   depth: number,
   options: Required<SlimCompileOptions>,
+  parent?: SlimElementNode,
 ): string[] {
   const indent = options.indent.repeat(depth)
 
@@ -831,7 +1063,7 @@ function emitNodeToSlim(
   }
 
   const inlineText = flattenInlineText(node)
-  const declaration = emitElementDeclaration(node, options.compact)
+  const declaration = emitElementDeclaration(node, parent, options.compact)
   const lines = [
     inlineText !== undefined ? `${indent}${declaration} ${inlineText}` : `${indent}${declaration}`,
   ]
@@ -847,7 +1079,7 @@ function emitNodeToSlim(
     if (emittedInlineFromChild && child.type === 'text') {
       continue
     }
-    lines.push(...emitNodeToSlim(child, depth + 1, options))
+    lines.push(...emitNodeToSlim(child, depth + 1, options, node))
   }
 
   return lines
@@ -868,20 +1100,26 @@ export function compileToSlim(
     .trim()
 }
 
-function createDomNode(node: SlimNode, doc: Document): Node {
+function createDomNode(
+  node: SlimNode,
+  doc: Document,
+  parent?: SlimElementNode,
+): Node {
   if (node.type === 'text') {
     return doc.createTextNode(node.value)
   }
 
   const element = doc.createElement(node.tag)
-  if (node.id) {
-    element.id = node.id
+  const effective = resolveEffectiveElementContext(node, parent)
+
+  if (effective.id) {
+    element.id = effective.id
   }
-  if (node.classes.length > 0) {
-    element.className = node.classes.join(' ')
+  if (effective.classes.length > 0) {
+    element.className = effective.classes.join(' ')
   }
 
-  for (const [name, value] of Object.entries(node.attrs)) {
+  for (const [name, value] of Object.entries(effective.attrs)) {
     if (!isLikelyAttributeName(name)) {
       continue
     }
@@ -900,7 +1138,7 @@ function createDomNode(node: SlimNode, doc: Document): Node {
   }
 
   for (const child of node.children) {
-    element.append(createDomNode(child, doc))
+    element.append(createDomNode(child, doc, node))
   }
 
   return element
