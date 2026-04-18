@@ -207,6 +207,7 @@ Nota:
 
 Descrizione:
 - input senza type esplicito => type="text"
+- button fuori da un form senza type esplicito => type="button"
 - button dentro form senza type esplicito => type="submit"
 
 Esempio:
@@ -268,6 +269,7 @@ A:
 Descrizione:
 - compressSlimLossless(source) esegue parse + compileToSlim(compact: true)
 - applica in cascata tutte le forme di compressione lossless disponibili
+- in modalità compatta, il serializer può sintetizzare childDefaults per classi ripetute sui figli diretti e rimuovere i duplicati dai figli
 
 ## Precedenza E Risoluzione (Dettagli Operativi)
 
@@ -371,11 +373,13 @@ Compressioni da preferire (lossless):
 3) Su immagini usa forma posizionale: ![img.png] invece di ![s=img.png].
 4) Su input usa boolean flags senza valore: [required disabled].
 5) Ometti type sugli input se e text.
-6) Ometti type sui button dentro form se e submit.
-7) Usa ereditarieta per attributi ripetuti sui figli diretti, es: +.menu [*class=item].
+6) Ometti type sui button fuori dai form se e button.
+7) Ometti type sui button dentro form se e submit.
+8) Usa ereditarieta per attributi ripetuti sui figli diretti, es: +.menu [*class=item] o ~.btn-group[$c=btn $c=btn-outline-secondary].
 
 Semantica implicita da rispettare:
 - input senza type => type=text
+- button fuori da un form senza type => type=button
 - button dentro form senza type => type=submit
 
 Vincoli di validita:

@@ -792,6 +792,153 @@ interface EffectiveElementContext {
   attrs: Record<string, SlimAttributeValue>
 }
 
+function cloneChildDefaultRule(rule: SlimChildDefaultRule): SlimChildDefaultRule {
+  return {
+    classes: [...rule.classes],
+    attrs: { ...rule.attrs },
+  }
+}
+
+function mergeChildDefaultMaps(
+  base?: Record<string, SlimChildDefaultRule>,
+  extra?: Record<string, SlimChildDefaultRule>,
+): Record<string, SlimChildDefaultRule> | undefined {
+  if (!base && !extra) {
+    return undefined
+  }
+
+  const merged: Record<string, SlimChildDefaultRule> = {}
+
+  const mergeFromSource = (
+    source: Record<string, SlimChildDefaultRule> | undefined,
+    allowAttrOverwrite: boolean,
+  ): void => {
+    if (!source) {
+      return
+    }
+
+    for (const [tag, rule] of Object.entries(source)) {
+      const key = tag.toLowerCase()
+      if (!merged[key]) {
+        merged[key] = cloneChildDefaultRule(rule)
+        continue
+      }
+
+      const target = merged[key]
+
+      for (const className of rule.classes) {
+        if (!target.classes.includes(className)) {
+          target.classes.push(className)
+        }
+      }
+
+      for (const [name, value] of Object.entries(rule.attrs)) {
+        if (allowAttrOverwrite || target.attrs[name] === undefined) {
+          target.attrs[name] = value
+        }
+      }
+    }
+  }
+
+  mergeFromSource(base, true)
+  mergeFromSource(extra, false)
+
+  return merged
+}
+
+function collectCompactChildDefaults(
+  node: SlimElementNode,
+): Record<string, SlimChildDefaultRule> | undefined {
+  const groups = new Map<string, SlimElementNode[]>()
+
+  for (const child of node.children) {
+    if (child.type !== 'element') {
+      continue
+    }
+
+    const tag = child.tag.toLowerCase()
+    const group = groups.get(tag)
+    if (group) {
+      group.push(child)
+    } else {
+      groups.set(tag, [child])
+    }
+  }
+
+  const synthesized: Record<string, SlimChildDefaultRule> = {}
+
+  for (const [tag, children] of groups) {
+    if (children.length < 2) {
+      continue
+    }
+
+    const sharedClasses = children[0].classes.filter((className) =>
+      children.every((child) => child.classes.includes(className)),
+    )
+
+    if (sharedClasses.length === 0) {
+      continue
+    }
+
+    synthesized[tag] = {
+      classes: sharedClasses,
+      attrs: {},
+    }
+  }
+
+  return Object.keys(synthesized).length > 0 ? synthesized : undefined
+}
+
+function resolveSlimEmissionContext(
+  node: SlimElementNode,
+  parentChildDefaults?: Record<string, SlimChildDefaultRule>,
+): EffectiveElementContext {
+  const inherited = parentChildDefaults?.[node.tag.toLowerCase()]
+  const classes = [...node.classes]
+  const attrs: Record<string, SlimAttributeValue> = { ...node.attrs }
+  let id = node.id
+
+  if (inherited) {
+    for (const className of inherited.classes) {
+      let index = classes.indexOf(className)
+      while (index !== -1) {
+        classes.splice(index, 1)
+        index = classes.indexOf(className)
+      }
+    }
+
+    for (const [name, value] of Object.entries(inherited.attrs)) {
+      if (name === 'id') {
+        if (id === value) {
+          id = undefined
+        }
+        continue
+      }
+
+      if (name === 'class' && typeof value === 'string') {
+        for (const className of value.split(/\s+/).filter(Boolean)) {
+          let index = classes.indexOf(className)
+          while (index !== -1) {
+            classes.splice(index, 1)
+            index = classes.indexOf(className)
+          }
+        }
+        continue
+      }
+
+      if (attrs[name] !== undefined && attrs[name] === value) {
+        delete attrs[name]
+      }
+    }
+  }
+
+  return {
+    id,
+    classes,
+    attrs,
+  }
+}
+
 function getInheritedChildRule(
   parent: SlimElementNode | undefined,
   childTag: string,
@@ -970,20 +1117,30 @@ function emitElementDeclaration(
   node: SlimElementNode,
   parent: SlimElementNode | undefined,
   compact: boolean,
+  childDefaults?: Record<string, SlimChildDefaultRule>,
+  parentChildDefaults?: Record<string, SlimChildDefaultRule>,
 ): string {
   const tagToken = compact ? TAG_TO_ALIAS[node.tag] ?? node.tag : node.tag
   let declaration = tagToken
 
-  if (node.id) {
-    declaration += `#${node.id}`
+  const emissionContext = compact
+    ? resolveSlimEmissionContext(node, parentChildDefaults)
+    : {
+        id: node.id,
+        classes: [...node.classes],
+        attrs: { ...node.attrs },
+      }
+
+  if (emissionContext.id) {
+    declaration += `#${emissionContext.id}`
   }
 
-  for (const className of node.classes) {
+  for (const className of emissionContext.classes) {
     declaration += `.${className}`
   }
 
   const tokens: string[] = []
-  const attrs = { ...node.attrs }
+  const attrs = { ...emissionContext.attrs }
 
   const isDefaultInputTextType =
     node.tag.toLowerCase() === 'input' && attrs.type === 'text'
@@ -991,8 +1148,12 @@ function emitElementDeclaration(
     node.tag.toLowerCase() === 'button' &&
     parent?.tag.toLowerCase() === 'form' &&
     attrs.type === 'submit'
+  const isDefaultButtonType =
+    node.tag.toLowerCase() === 'button' &&
+    parent?.tag.toLowerCase() !== 'form' &&
+    attrs.type === 'button'
 
-  if (compact && (isDefaultInputTextType || isDefaultFormSubmitType)) {
+  if (compact && (isDefaultInputTextType || isDefaultFormSubmitType || isDefaultButtonType)) {
     delete attrs.type
   }
 
@@ -1019,8 +1180,10 @@ function emitElementDeclaration(
     tokens.push(`${outputName}=${quoteSlimValue(value)}`)
   }
 
-  if (node.childDefaults) {
-    for (const [childTag, rule] of Object.entries(node.childDefaults)) {
+  const effectiveChildDefaults = childDefaults ?? node.childDefaults
+
+  if (effectiveChildDefaults) {
+    for (const [childTag, rule] of Object.entries(effectiveChildDefaults)) {
       const childToken = compact ? TAG_TO_ALIAS[childTag] ?? childTag : childTag
 
       for (const className of rule.classes) {
@@ -1055,6 +1218,7 @@ function emitNodeToSlim(
   depth: number,
   options: Required<SlimCompileOptions>,
   parent?: SlimElementNode,
+  parentChildDefaults?: Record<string, SlimChildDefaultRule>,
 ): string[] {
   const indent = options.indent.repeat(depth)
 
@@ -1062,8 +1226,20 @@ function emitNodeToSlim(
     return [`${indent}| ${node.value}`]
   }
 
+  const synthesizedChildDefaults = options.compact
+    ? collectCompactChildDefaults(node)
+    : undefined
+  const effectiveChildDefaults = options.compact
+    ? mergeChildDefaultMaps(node.childDefaults, synthesizedChildDefaults)
+    : node.childDefaults
   const inlineText = flattenInlineText(node)
-  const declaration = emitElementDeclaration(node, parent, options.compact)
+  const declaration = emitElementDeclaration(
+    node,
+    parent,
+    options.compact,
+    effectiveChildDefaults,
+    parentChildDefaults,
+  )
   const lines = [
     inlineText !== undefined ? `${indent}${declaration} ${inlineText}` : `${indent}${declaration}`,
   ]
@@ -1079,7 +1255,7 @@ function emitNodeToSlim(
     if (emittedInlineFromChild && child.type === 'text') {
       continue
     }
-    lines.push(...emitNodeToSlim(child, depth + 1, options, node))
+    lines.push(...emitNodeToSlim(child, depth + 1, options, node, effectiveChildDefaults))
   }
 
   return lines

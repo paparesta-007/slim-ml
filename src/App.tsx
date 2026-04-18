@@ -87,6 +87,16 @@ function DomPreview({ ast }: DomPreviewProps) {
   return <div className="dom-preview-surface" ref={previewRef} />
 }
 
+function normalizeEscapedNewlines(source: string): string {
+  if (source.includes('\\n') || source.includes('\\r\\n')) {
+    return source
+      .replaceAll('\\r\\n', '\n')
+      .replaceAll('\\n', '\n')
+  }
+
+  return source
+}
+
 function App() {
   const [slimSource, setSlimSource] = useState(STARTER_SLIM)
   const [htmlSource, setHtmlSource] = useState(STARTER_HTML)
@@ -118,6 +128,23 @@ function App() {
     () => compareTokenUsage(compressedSlim, slimSource.trimEnd()),
     [compressedSlim, slimSource],
   )
+
+  useEffect(() => {
+    if (lastEdited !== 'slim') {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      const parsed = parseSlimML(slimSource)
+      if (!parsed.ok) {
+        return
+      }
+
+      setHtmlSource(compileToHtml(parsed.ast))
+    }, 220)
+
+    return () => window.clearTimeout(timer)
+  }, [slimSource, lastEdited])
 
   useEffect(() => {
     if (lastEdited !== 'html') {
@@ -239,7 +266,7 @@ function App() {
             spellCheck={false}
             value={slimSource}
             onChange={(event) => {
-              setSlimSource(event.target.value)
+              setSlimSource(normalizeEscapedNewlines(event.target.value))
               setLastEdited('slim')
             }}
           />
@@ -265,7 +292,7 @@ function App() {
             spellCheck={false}
             value={htmlSource}
             onChange={(event) => {
-              setHtmlSource(event.target.value)
+              setHtmlSource(normalizeEscapedNewlines(event.target.value))
               setLastEdited('html')
             }}
           />
@@ -314,11 +341,11 @@ function App() {
           </article>
           <article>
             <h3>Implicit Defaults</h3>
-            <p>| means input type=text, and button in form defaults to submit</p>
+            <p>| means input type=text, button outside a form defaults to type=button, and button in form defaults to submit</p>
           </article>
           <article>
             <h3>Child Inheritance</h3>
-            <p>Use +.menu [*class=nav-item] to style repeated li children once</p>
+            <p>Use $c=... on the parent, for example $c=btn $c=btn-outline-secondary, to inherit repeated button classes once</p>
           </article>
           <article>
             <h3>Positional Attr</h3>
