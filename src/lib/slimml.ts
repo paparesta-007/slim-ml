@@ -561,7 +561,7 @@ function getChildren(target: SlimDocument | SlimElementNode): SlimNode[] {
 }
 
 function looksLikeDepthPrefixedSlimLine(line: string): boolean {
-  const match = line.match(/^(\d+)(\S.*)$/)
+  const match = line.match(/^(\d+)\s*(.*)$/)
   if (!match) {
     return false
   }
@@ -569,7 +569,7 @@ function looksLikeDepthPrefixedSlimLine(line: string): boolean {
   const firstToken = match[2][0]
 
   // Avoid false positives when user pastes HTML/JSX snippets.
-  if (firstToken === '<' || firstToken === '/') {
+  if (!firstToken || firstToken === '<' || firstToken === '/') {
     return false
   }
 
@@ -1646,12 +1646,22 @@ function parseElementDeclaration(
           index + 1,
         )
       }
-
+      
       const content = declaration.slice(index + 1, end).trim()
       if (content) {
         parseAttributesBlock(content, node, lineNumber)
       }
       index = end + 1
+      continue
+    }
+
+    if (char === '=') {
+      const end = declaration.length
+      const equalsContent = declaration.slice(index + 1, end).trim()
+      if (equalsContent) {
+        applyAttributeToken(equalsContent, node, lineNumber)
+      }
+      index = end
       continue
     }
     
@@ -1686,9 +1696,25 @@ function parseElementDeclaration(
   }
 
   if (text) {
-    const looseText = parseLooseInlineContent(text, node, lineNumber)
-    if (looseText !== undefined) {
-      node.text = looseText
+    let currentText = text.trim()
+    while (currentText.length > 0 && currentText.endsWith(']')) {
+      const match = currentText.match(/^(.*?)\[([^\]\\]*(?:\\.[^\]\\]*)*)\]$/)
+      if (match) {
+        const blockContent = match[2].trim()
+        if (blockContent) {
+          parseAttributesBlock(blockContent, node, lineNumber)
+        }
+        currentText = match[1].trim()
+      } else {
+        break
+      }
+    }
+
+    if (currentText) {
+      const looseText = parseLooseInlineContent(currentText, node, lineNumber)
+      if (looseText !== undefined) {
+        node.text = looseText
+      }
     }
   }
 
@@ -1730,7 +1756,8 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
       const line = rawLines[i]
       if (line.trim().length === 0) continue
       
-      if (!/^\d/.test(line.trimStart()) && lines.length > 0) {
+      const isListItem = /^[ \t]*[-*+]\s+/.test(line)
+      if (!/^\d/.test(line.trimStart()) && !isListItem && lines.length > 0) {
         lines[lines.length - 1].text += ' ' + line.trim()
       } else {
         lines.push({ text: line, lineNumber: i + 1 })
@@ -1751,7 +1778,7 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
     const lineNumber = lines[index].lineNumber
 
     try {
-      const depthPrefixMatch = rawLine.match(/^(\d+)(\S.*)$/)
+      const depthPrefixMatch = rawLine.match(/^(\d+)\s*(.*)$/)
       if (!indentationMode && canUseDepthPrefix && looksLikeDepthPrefixedSlimLine(rawLine)) {
         indentationMode = 'depth-prefix'
       }

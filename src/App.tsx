@@ -79,7 +79,7 @@ interface DomPreviewProps {
 const SLIM_ALIAS_TAGS = new Set([
   '~', '^', '@', '$', '!', '|', '%', '+', '*', '=', '?', ':', ',', '&',
   'N', 'H', 'F', 'M', 'A', 'Z', 'B', 'I', '`', 'P', 'G', 'f', 'D', 'S', 'X',
-  'Q', 'T', 'E', 'Y', 'R', 'C', 'U', 'V', 'O', 'J', 'L', 'm', 'w', 'x', 'y',
+  'Q', 'T', 'E', 'Y', 'R', 'C', 'U', 'V', 'O', 'J', 'L', 'm', 'w', 'x', 'y'
 ])
 
 function shouldUseTagAliasToken(declaration: string, index = 0): boolean {
