@@ -219,6 +219,26 @@ function getChildren(target: SlimDocument | SlimElementNode): SlimNode[] {
   return target.children
 }
 
+function looksLikeDepthPrefixedSlimLine(line: string): boolean {
+  const match = line.match(/^(\d+)(\S.*)$/)
+  if (!match) {
+    return false
+  }
+
+  const firstToken = match[2][0]
+
+  // Avoid false positives when user pastes HTML/JSX snippets.
+  if (firstToken === '<' || firstToken === '/') {
+    return false
+  }
+
+  if (ALIAS_TAGS[firstToken] || firstToken === '.' || firstToken === '#' || firstToken === '[') {
+    return true
+  }
+
+  return /[a-zA-Z]/.test(firstToken)
+}
+
 function isIdentifierChar(char: string): boolean {
   return /[a-zA-Z0-9:_-]/.test(char)
 }
@@ -233,6 +253,20 @@ function resolveAttributeName(name: string): string {
   }
 
   return name
+}
+
+function resolveAttributeNameForTag(name: string, tag: string): string {
+  const lowerTag = tag.toLowerCase()
+  if (lowerTag === 'img') {
+    if (name === 'w') {
+      return 'width'
+    }
+    if (name === 'h') {
+      return 'height'
+    }
+  }
+
+  return resolveAttributeName(name)
 }
 
 function resolveAttributeOutputName(name: string, compact: boolean): string {
@@ -251,11 +285,42 @@ function resolveAttributeOutputName(name: string, compact: boolean): string {
   return name
 }
 
+function resolveAttributeOutputNameForTag(
+  name: string,
+  tag: string,
+  compact: boolean,
+): string {
+  if (compact && tag.toLowerCase() === 'img') {
+    if (name === 'width') {
+      return 'w'
+    }
+    if (name === 'height') {
+      return 'h'
+    }
+  }
+
+  return resolveAttributeOutputName(name, compact)
+}
+
+function isSlimExpressionValue(value: string): boolean {
+  const trimmed = value.trim()
+
+  return (
+    (trimmed.startsWith('${') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('{') && trimmed.endsWith('}'))
+  )
+}
+
 function parseAttributeValue(
   name: string,
   rawValue: string,
 ): SlimAttributeValue {
   const value = stripQuotes(rawValue)
+
+  if (isSlimExpressionValue(value)) {
+    return value
+  }
+
   const lowerName = name.toLowerCase()
 
   if (BOOLEAN_ATTRIBUTES.has(lowerName)) {
@@ -311,7 +376,7 @@ function tryApplyChildDefaultToken(
     throw new ParserIssue('Child inheritance token is missing an attribute name.', line, 1)
   }
 
-  const outputName = resolveAttributeName(rawName)
+  const outputName = resolveAttributeNameForTag(rawName, childTag)
   const rule = ensureChildDefaultRule(node, childTag)
 
   if (eqIndex === -1) {
@@ -406,9 +471,39 @@ function tokenizeAttributes(content: string): string[] {
   const tokens: string[] = []
   let token = ''
   let quote: '"' | "'" | null = null
+  let expressionDepth = 0
+  let expressionQuote: '"' | "'" | null = null
 
   for (let i = 0; i < content.length; i += 1) {
     const char = content[i]
+
+    if (expressionDepth > 0) {
+      token += char
+
+      if (expressionQuote) {
+        if (char === expressionQuote && content[i - 1] !== '\\') {
+          expressionQuote = null
+        }
+        continue
+      }
+
+      if (char === '"' || char === "'") {
+        expressionQuote = char
+        continue
+      }
+
+      if (char === '{') {
+        expressionDepth += 1
+        continue
+      }
+
+      if (char === '}') {
+        expressionDepth -= 1
+        continue
+      }
+
+      continue
+    }
 
     if (quote) {
       token += char
@@ -421,6 +516,19 @@ function tokenizeAttributes(content: string): string[] {
     if (char === '"' || char === "'") {
       quote = char
       token += char
+      continue
+    }
+
+    if (char === '$' && content[i + 1] === '{') {
+      token += '${'
+      expressionDepth = 1
+      i += 1
+      continue
+    }
+
+    if (char === '{') {
+      token += char
+      expressionDepth = 1
       continue
     }
 
@@ -500,7 +608,7 @@ function applyAttributeToken(
       return
     }
 
-    const attrName = resolveAttributeName(token)
+    const attrName = resolveAttributeNameForTag(token, node.tag)
     node.attrs[attrName] = true
     return
   }
@@ -532,7 +640,7 @@ function applyAttributeToken(
     throw new ParserIssue('Invalid attribute key.', line, 1)
   }
 
-  const name = resolveAttributeName(rawName)
+  const name = resolveAttributeNameForTag(rawName, node.tag)
   const value = parseAttributeValue(name, rawValue)
 
   if (name === 'class') {
@@ -720,7 +828,7 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
       }
 
       const depthPrefixMatch = rawLine.match(/^(\d+)(\S.*)$/)
-      if (!indentationMode && canUseDepthPrefix && depthPrefixMatch) {
+      if (!indentationMode && canUseDepthPrefix && looksLikeDepthPrefixedSlimLine(rawLine)) {
         indentationMode = 'depth-prefix'
       }
 
@@ -1179,6 +1287,10 @@ export function compileToHtml(ast: SlimDocument): string {
 }
 
 function quoteSlimValue(value: string): string {
+  if (isSlimExpressionValue(value)) {
+    return value
+  }
+
   if (/^[^\s\[\]"']+$/.test(value)) {
     return value
   }
@@ -1259,7 +1371,7 @@ function emitElementDeclaration(
   }
 
   for (const [name, value] of Object.entries(attrs)) {
-    const outputName = resolveAttributeOutputName(name, compact)
+    const outputName = resolveAttributeOutputNameForTag(name, node.tag, compact)
 
     if (typeof value === 'boolean') {
       if (value) {
@@ -1283,7 +1395,7 @@ function emitElementDeclaration(
       }
 
       for (const [name, value] of Object.entries(rule.attrs)) {
-        const outputName = resolveAttributeOutputName(name, compact)
+        const outputName = resolveAttributeOutputNameForTag(name, childTag, compact)
 
         if (typeof value === 'boolean') {
           if (value) {

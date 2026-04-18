@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import {
   SLIM_COMPRESSION_MODES,
   compareTokenUsage,
@@ -131,9 +131,39 @@ function tokenizeAttributeBlock(content: string): string[] {
   const tokens: string[] = []
   let token = ''
   let quote: '"' | "'" | null = null
+  let expressionDepth = 0
+  let expressionQuote: '"' | "'" | null = null
 
   for (let i = 0; i < content.length; i += 1) {
     const char = content[i]
+
+    if (expressionDepth > 0) {
+      token += char
+
+      if (expressionQuote) {
+        if (char === expressionQuote && content[i - 1] !== '\\') {
+          expressionQuote = null
+        }
+        continue
+      }
+
+      if (char === '"' || char === "'") {
+        expressionQuote = char
+        continue
+      }
+
+      if (char === '{') {
+        expressionDepth += 1
+        continue
+      }
+
+      if (char === '}') {
+        expressionDepth -= 1
+        continue
+      }
+
+      continue
+    }
 
     if (quote) {
       token += char
@@ -146,6 +176,19 @@ function tokenizeAttributeBlock(content: string): string[] {
     if (char === '"' || char === "'") {
       token += char
       quote = char
+      continue
+    }
+
+    if (char === '$' && content[i + 1] === '{') {
+      token += '${'
+      expressionDepth = 1
+      i += 1
+      continue
+    }
+
+    if (char === '{') {
+      token += char
+      expressionDepth = 1
       continue
     }
 
@@ -398,6 +441,83 @@ function normalizeEscapedNewlines(source: string): string {
   return source
 }
 
+function looksLikeHtmlOrJsx(source: string): boolean {
+  const trimmed = source.trimStart()
+  return (
+    trimmed.startsWith('<') ||
+    trimmed.startsWith('</') ||
+    trimmed.startsWith('<!doctype') ||
+    trimmed.startsWith('<!DOCTYPE')
+  )
+}
+
+function normalizeJsxForHtmlParsing(source: string): string {
+  return source
+    .replace(/\bclassName=/g, 'class=')
+    .replace(/\bhtmlFor=/g, 'for=')
+    .replace(/<>/g, '<div>')
+    .replace(/<\/>/g, '</div>')
+    .replace(/\{\.\.\.[^}]+\}/g, '')
+    .replace(/=\{([^}]+)\}/g, '="$1"')
+    .replace(/\{([^}]+)\}/g, '$1')
+}
+
+interface SlimInputInterpretationSuccess {
+  ok: true
+  ast: SlimDocument
+  mode: 'slim' | 'html-jsx'
+  normalizedSlim?: string
+}
+
+interface SlimInputInterpretationFailure {
+  ok: false
+  error: string
+}
+
+type SlimInputInterpretation = SlimInputInterpretationSuccess | SlimInputInterpretationFailure
+
+function interpretSlimSource(
+  source: string,
+  compressionMode: SlimCompressionMode,
+): SlimInputInterpretation {
+  const parsedSlim = parseSlimML(source)
+  if (parsedSlim.ok) {
+    return {
+      ok: true,
+      ast: parsedSlim.ast,
+      mode: 'slim',
+    }
+  }
+
+  if (!looksLikeHtmlOrJsx(source)) {
+    return {
+      ok: false,
+      error: formatParseError(parsedSlim.error),
+    }
+  }
+
+  const jsxNormalized = normalizeJsxForHtmlParsing(source)
+  const converted = convertHtmlToSlim(jsxNormalized, { compressionMode })
+  if (!converted.ok) {
+    return {
+      ok: false,
+      error: `Slim parse failed: ${formatParseError(parsedSlim.error)} | HTML/JSX parse failed: ${converted.error}`,
+    }
+  }
+
+  return {
+    ok: true,
+    ast: converted.ast,
+    mode: 'html-jsx',
+    normalizedSlim: converted.slim,
+  }
+}
+
+function buildLineNumbers(source: string): string {
+  const totalLines = source.replace(/\r\n?/g, '\n').split('\n').length
+  return Array.from({ length: totalLines }, (_, index) => `${index + 1}`).join('\n')
+}
+
 function App() {
   const [slimSource, setSlimSource] = useState(STARTER_SLIM)
   const [htmlSource, setHtmlSource] = useState(STARTER_HTML)
@@ -408,13 +528,19 @@ function App() {
   const [lastEdited, setLastEdited] = useState<'slim' | 'html' | null>(null)
   const slimEditorRef = useRef<HTMLTextAreaElement>(null)
   const slimHighlightRef = useRef<HTMLPreElement>(null)
+  const slimGutterRef = useRef<HTMLPreElement>(null)
+  const htmlEditorRef = useRef<HTMLTextAreaElement>(null)
+  const htmlGutterRef = useRef<HTMLPreElement>(null)
 
-  const slimParse = useMemo(() => parseSlimML(slimSource), [slimSource])
+  const slimInterpretation = useMemo(
+    () => interpretSlimSource(slimSource, compressionMode),
+    [compressionMode, slimSource],
+  )
   const htmlParse = useMemo(() => parseHtmlToAst(htmlSource), [htmlSource])
 
-  const previewAst = slimParse.ok ? slimParse.ast : htmlParse.ok ? htmlParse.ast : null
+  const previewAst = slimInterpretation.ok ? slimInterpretation.ast : htmlParse.ok ? htmlParse.ast : null
 
-  const slimError = slimParse.ok ? null : formatParseError(slimParse.error)
+  const slimError = slimInterpretation.ok ? null : slimInterpretation.error
   const htmlError = htmlParse.ok ? null : htmlParse.error
 
   const tokenStats = useMemo(
@@ -423,12 +549,17 @@ function App() {
   )
 
   const compressedSlim = useMemo(() => {
-    const result = compressSlimLossless(slimSource, { compressionMode })
+    const sourceToCompress =
+      slimInterpretation.ok && slimInterpretation.mode === 'html-jsx'
+        ? (slimInterpretation.normalizedSlim ?? slimSource)
+        : slimSource
+
+    const result = compressSlimLossless(sourceToCompress, { compressionMode })
     if (!result.ok) {
       return ''
     }
     return result.slim
-  }, [compressionMode, slimSource])
+  }, [compressionMode, slimInterpretation, slimSource])
 
   const compactStats = useMemo(
     () => compareTokenUsage(compressedSlim, slimSource.trimEnd()),
@@ -436,22 +567,100 @@ function App() {
   )
 
   const highlightedSlimSource = useMemo(() => `${highlightSlimML(slimSource)}\n`, [slimSource])
+  const slimLineNumbers = useMemo(() => `${buildLineNumbers(slimSource)}\n`, [slimSource])
+  const htmlLineNumbers = useMemo(() => `${buildLineNumbers(htmlSource)}\n`, [htmlSource])
 
-  const syncSlimHighlightScroll = (target: HTMLTextAreaElement) => {
+  const syncSlimEditorDecorators = (target: HTMLTextAreaElement) => {
     if (!slimHighlightRef.current) {
+      if (slimGutterRef.current) {
+        slimGutterRef.current.scrollTop = target.scrollTop
+      }
       return
     }
 
     slimHighlightRef.current.scrollTop = target.scrollTop
     slimHighlightRef.current.scrollLeft = target.scrollLeft
+
+    if (slimGutterRef.current) {
+      slimGutterRef.current.scrollTop = target.scrollTop
+    }
+  }
+
+  const syncHtmlGutterScroll = (target: HTMLTextAreaElement) => {
+    if (!htmlGutterRef.current) {
+      return
+    }
+
+    htmlGutterRef.current.scrollTop = target.scrollTop
+  }
+
+  const handleBracketAwareKeyDown = (
+    event: KeyboardEvent<HTMLTextAreaElement>,
+    sourceValue: string,
+    setSourceValue: (value: string) => void,
+    edited: 'slim' | 'html',
+  ) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return
+    }
+
+    const openToClose: Record<string, string> = {
+      '[': ']',
+      '{': '}',
+      '(': ')',
+      '<': '>',
+      '"': '"',
+      "'": "'",
+    }
+
+    const closeChars = new Set(Object.values(openToClose))
+    const openChar = openToClose[event.key]
+    const target = event.currentTarget
+    const start = target.selectionStart
+    const end = target.selectionEnd
+
+    if (openChar && start === end) {
+      const nextChar = sourceValue.slice(start, start + 1)
+      const shouldPairQuote = event.key === '"' || event.key === "'"
+      const canInsertPair =
+        nextChar.length === 0 || /[\s\]})>,.;:]/.test(nextChar) || closeChars.has(nextChar)
+
+      if (!shouldPairQuote || canInsertPair) {
+        event.preventDefault()
+        const updated = `${sourceValue.slice(0, start)}${event.key}${openChar}${sourceValue.slice(end)}`
+        setSourceValue(updated)
+        setLastEdited(edited)
+
+        requestAnimationFrame(() => {
+          target.selectionStart = start + 1
+          target.selectionEnd = start + 1
+        })
+      }
+      return
+    }
+
+    if (closeChars.has(event.key) && start === end && sourceValue[start] === event.key) {
+      event.preventDefault()
+      requestAnimationFrame(() => {
+        target.selectionStart = start + 1
+        target.selectionEnd = start + 1
+      })
+    }
   }
 
   useEffect(() => {
     if (!slimEditorRef.current) {
       return
     }
-    syncSlimHighlightScroll(slimEditorRef.current)
+    syncSlimEditorDecorators(slimEditorRef.current)
   }, [slimSource])
+
+  useEffect(() => {
+    if (!htmlEditorRef.current) {
+      return
+    }
+    syncHtmlGutterScroll(htmlEditorRef.current)
+  }, [htmlSource])
 
   useEffect(() => {
     if (lastEdited !== 'slim') {
@@ -459,16 +668,16 @@ function App() {
     }
 
     const timer = window.setTimeout(() => {
-      const parsed = parseSlimML(slimSource)
-      if (!parsed.ok) {
+      const interpreted = interpretSlimSource(slimSource, compressionMode)
+      if (!interpreted.ok) {
         return
       }
 
-      setHtmlSource(compileToHtml(parsed.ast))
+      setHtmlSource(compileToHtml(interpreted.ast))
     }, 220)
 
     return () => window.clearTimeout(timer)
-  }, [slimSource, lastEdited])
+  }, [compressionMode, slimSource, lastEdited])
 
   useEffect(() => {
     if (lastEdited !== 'html') {
@@ -487,15 +696,19 @@ function App() {
   }, [compressionMode, htmlSource, lastEdited])
 
   const handleSlimToHtml = () => {
-    const parsed = parseSlimML(slimSource)
-    if (!parsed.ok) {
-      setActionMessage(`Slim parse failed: ${formatParseError(parsed.error)}`)
+    const interpreted = interpretSlimSource(slimSource, compressionMode)
+    if (!interpreted.ok) {
+      setActionMessage(interpreted.error)
       return
     }
 
-    setHtmlSource(compileToHtml(parsed.ast))
+    setHtmlSource(compileToHtml(interpreted.ast))
     setLastEdited('slim')
-    setActionMessage('Converted SlimML to HTML.')
+    setActionMessage(
+      interpreted.mode === 'html-jsx'
+        ? 'Detected HTML/JSX in Slim editor and converted it to HTML preview.'
+        : 'Converted SlimML to HTML.',
+    )
   }
 
   const handleHtmlToSlim = () => {
@@ -511,7 +724,12 @@ function App() {
   }
 
   const handleCompressSlim = () => {
-    const compressed = compressSlimLossless(slimSource, { compressionMode })
+    const sourceToCompress =
+      slimInterpretation.ok && slimInterpretation.mode === 'html-jsx'
+        ? (slimInterpretation.normalizedSlim ?? slimSource)
+        : slimSource
+
+    const compressed = compressSlimLossless(sourceToCompress, { compressionMode })
     if (!compressed.ok) {
       setActionMessage(`Slim compression failed: ${formatParseError(compressed.error)}`)
       return
@@ -646,25 +864,33 @@ function App() {
           <label htmlFor="slimml-editor" className="sr-only">
             SlimML source editor
           </label>
-          <div className="editor-stack">
-            <pre
-              ref={slimHighlightRef}
-              className="editor-highlight"
-              aria-hidden="true"
-              dangerouslySetInnerHTML={{ __html: highlightedSlimSource }}
-            />
-            <textarea
-              id="slimml-editor"
-              ref={slimEditorRef}
-              className="editor editor-overlay"
-              spellCheck={false}
-              value={slimSource}
-              onScroll={(event) => syncSlimHighlightScroll(event.currentTarget)}
-              onChange={(event) => {
-                setSlimSource(normalizeEscapedNewlines(event.target.value))
-                setLastEdited('slim')
-              }}
-            />
+          <div className="editor-shell">
+            <pre ref={slimGutterRef} className="editor-gutter" aria-hidden="true">
+              {slimLineNumbers}
+            </pre>
+            <div className="editor-stack">
+              <pre
+                ref={slimHighlightRef}
+                className="editor-highlight"
+                aria-hidden="true"
+                dangerouslySetInnerHTML={{ __html: highlightedSlimSource }}
+              />
+              <textarea
+                id="slimml-editor"
+                ref={slimEditorRef}
+                className="editor editor-overlay"
+                spellCheck={false}
+                value={slimSource}
+                onScroll={(event) => syncSlimEditorDecorators(event.currentTarget)}
+                onKeyDown={(event) =>
+                  handleBracketAwareKeyDown(event, slimSource, (value) => setSlimSource(value), 'slim')
+                }
+                onChange={(event) => {
+                  setSlimSource(normalizeEscapedNewlines(event.target.value))
+                  setLastEdited('slim')
+                }}
+              />
+            </div>
           </div>
           <p className={slimError ? 'status status-error' : 'status status-ok'} aria-live="polite">
             {slimError ?? 'Slim parser status: valid.'}
@@ -679,16 +905,26 @@ function App() {
           <label htmlFor="html-editor" className="sr-only">
             HTML source editor
           </label>
-          <textarea
-            id="html-editor"
-            className="editor"
-            spellCheck={false}
-            value={htmlSource}
-            onChange={(event) => {
-              setHtmlSource(normalizeEscapedNewlines(event.target.value))
-              setLastEdited('html')
-            }}
-          />
+          <div className="editor-shell">
+            <pre ref={htmlGutterRef} className="editor-gutter" aria-hidden="true">
+              {htmlLineNumbers}
+            </pre>
+            <textarea
+              id="html-editor"
+              ref={htmlEditorRef}
+              className="editor editor-plain"
+              spellCheck={false}
+              value={htmlSource}
+              onScroll={(event) => syncHtmlGutterScroll(event.currentTarget)}
+              onKeyDown={(event) =>
+                handleBracketAwareKeyDown(event, htmlSource, (value) => setHtmlSource(value), 'html')
+              }
+              onChange={(event) => {
+                setHtmlSource(normalizeEscapedNewlines(event.target.value))
+                setLastEdited('html')
+              }}
+            />
+          </div>
           <p className={htmlError ? 'status status-error' : 'status status-ok'} aria-live="polite">
             {htmlError ?? 'HTML parser status: valid.'}
           </p>
