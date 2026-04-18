@@ -44,7 +44,7 @@ export interface SlimParseSuccess {
 
 export interface SlimParseFailure {
   ok: false
-  error: SlimParseError
+  errors: SlimParseError[]
 }
 
 export type SlimParseResult = SlimParseSuccess | SlimParseFailure
@@ -133,6 +133,16 @@ const IMPLICIT_CHILD_TAG_BY_PARENT: Record<string, string> = {
   tbody: 'tr',
   tr: 'td',
 }
+
+const DIMENSIONAL_MEDIA_TAGS = new Set(['img', 'video', 'canvas', 'svg'])
+const VALUE_CONTINUATION_ATTRIBUTES = new Set([
+  'alt',
+  'placeholder',
+  'title',
+  'label',
+  'value',
+  'aria-label',
+])
 
 const TAG_TO_ALIAS: Record<string, string> = {
   div: '~',
@@ -385,6 +395,88 @@ const VALUE_TO_ALIAS_BY_ATTR_AND_TAG: Record<
   },
 }
 
+const STYLE_PROP_ALIAS_TO_PROP: Record<string, string> = {
+  fw: 'font-weight',
+  fs: 'font-size',
+  ff: 'font-family',
+  co: 'color',
+  bg: 'background',
+  bc: 'background-color',
+  cu: 'cursor',
+  bd: 'border',
+  pd: 'padding',
+  mg: 'margin',
+  dp: 'display',
+  fd: 'flex-direction',
+  ai: 'align-items',
+  jc: 'justify-content',
+  wd: 'width',
+  hg: 'height',
+  mw: 'max-width',
+  br: 'border-radius',
+  ta: 'text-align',
+  ps: 'position',
+  tp: 'top',
+  rt: 'right',
+  bt: 'bottom',
+  lf: 'left',
+  zi: 'z-index',
+  ov: 'overflow',
+  op: 'opacity',
+  tr: 'transition',
+  tf: 'transform',
+  gp: 'gap',
+  lh: 'line-height',
+  ls: 'letter-spacing',
+  td: 'text-decoration',
+  bs: 'box-shadow',
+  gc: 'grid-template-columns',
+  fwr: 'flex-wrap',
+  pe: 'pointer-events',
+  ws: 'white-space',
+}
+
+const STYLE_PROP_TO_ALIAS: Record<string, string> = {
+  'font-weight': 'fw',
+  'font-size': 'fs',
+  'font-family': 'ff',
+  color: 'co',
+  background: 'bg',
+  'background-color': 'bc',
+  cursor: 'cu',
+  border: 'bd',
+  padding: 'pd',
+  margin: 'mg',
+  display: 'dp',
+  'flex-direction': 'fd',
+  'align-items': 'ai',
+  'justify-content': 'jc',
+  width: 'wd',
+  height: 'hg',
+  'max-width': 'mw',
+  'border-radius': 'br',
+  'text-align': 'ta',
+  position: 'ps',
+  top: 'tp',
+  right: 'rt',
+  bottom: 'bt',
+  left: 'lf',
+  'z-index': 'zi',
+  overflow: 'ov',
+  opacity: 'op',
+  transition: 'tr',
+  transform: 'tf',
+  gap: 'gp',
+  'line-height': 'lh',
+  'letter-spacing': 'ls',
+  'text-decoration': 'td',
+  'box-shadow': 'bs',
+  'grid-template-columns': 'gc',
+  'flex-wrap': 'fwr',
+  'pointer-events': 'pe',
+  'white-space': 'ws',
+}
+
 const COMMON_INPUT_TYPES = new Set([
   'text',
   'password',
@@ -500,6 +592,16 @@ function shouldUseTagAliasToken(declaration: string, index = 0): boolean {
   }
 
   return nextChar === '.' || nextChar === '#' || nextChar === '[' || /\s/.test(nextChar)
+}
+
+function shouldConsumeRepeatedTagName(declaration: string, index: number, tag: string): boolean {
+  const repeatedTag = tag.toLowerCase()
+  if (!declaration.slice(index).toLowerCase().startsWith(repeatedTag)) {
+    return false
+  }
+
+  const nextChar = declaration[index + repeatedTag.length]
+  return !nextChar || nextChar === '.' || nextChar === '#' || nextChar === '[' || /\s/.test(nextChar)
 }
 
 function getImplicitChildTag(parent: SlimDocument | SlimElementNode): string | undefined {
@@ -647,6 +749,92 @@ function resolveAttributeValueOutputAlias(
   return value
 }
 
+function splitStyleDeclarations(value: string): string[] {
+  const out: string[] = []
+  let token = ''
+  let quote: '"' | "'" | null = null
+  let parenDepth = 0
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+
+    if (quote) {
+      token += char
+      if (char === quote && value[index - 1] !== '\\') {
+        quote = null
+      }
+      continue
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char
+      token += char
+      continue
+    }
+
+    if (char === '(') {
+      parenDepth += 1
+      token += char
+      continue
+    }
+
+    if (char === ')') {
+      parenDepth = Math.max(0, parenDepth - 1)
+      token += char
+      continue
+    }
+
+    if (char === ';' && parenDepth === 0) {
+      if (token.trim().length > 0) {
+        out.push(token.trim())
+      }
+      token = ''
+      continue
+    }
+
+    token += char
+  }
+
+  if (token.trim().length > 0) {
+    out.push(token.trim())
+  }
+
+  return out
+}
+
+function normalizeInlineStyleValue(value: string, mode: 'parse' | 'emit'): string {
+  const declarations = splitStyleDeclarations(value)
+  if (declarations.length === 0) {
+    return value
+  }
+
+  const normalized: string[] = []
+
+  for (const declaration of declarations) {
+    const colonIndex = declaration.indexOf(':')
+    if (colonIndex === -1) {
+      normalized.push(declaration)
+      continue
+    }
+
+    const rawProp = declaration.slice(0, colonIndex).trim()
+    const rawCssValue = declaration.slice(colonIndex + 1).trim()
+
+    if (!rawProp || !rawCssValue) {
+      normalized.push(declaration)
+      continue
+    }
+
+    const normalizedProp = mode === 'parse'
+      ? (STYLE_PROP_ALIAS_TO_PROP[rawProp] ?? rawProp)
+      : (STYLE_PROP_TO_ALIAS[rawProp.toLowerCase()] ?? rawProp)
+
+    normalized.push(`${normalizedProp}:${rawCssValue}`)
+  }
+
+  return normalized.join(';')
+}
+
 function isSlimExpressionValue(value: string): boolean {
   const trimmed = value.trim()
 
@@ -665,6 +853,10 @@ function parseAttributeValue(
 
   if (isSlimExpressionValue(value)) {
     return value
+  }
+
+  if (name.toLowerCase() === 'style') {
+    return normalizeInlineStyleValue(value, 'parse')
   }
 
   const lowerName = name.toLowerCase()
@@ -716,6 +908,12 @@ function tryApplyChildDefaultToken(
     return false
   }
 
+  const secondChar = token[1]
+  if ((secondChar === '=' || secondChar === ':') && ATTR_ALIASES[firstChar] !== undefined) {
+    // Disambiguate compact attribute aliases like "m=p" from child-default syntax.
+    return false
+  }
+
   const eqIndex = token.indexOf('=')
   const rawName = (eqIndex === -1 ? token.slice(1) : token.slice(1, eqIndex)).trim()
   if (!rawName) {
@@ -763,6 +961,18 @@ function looksLikeMetaCharsetValue(token: string): boolean {
   return /^(utf-?8|iso[-_][\w-]+|windows[-_][\w-]+|shift[_-]jis)$/i.test(token)
 }
 
+function parseDimensionToken(token: string): { width: string; height: string } | null {
+  const match = token.match(/^(\d+)x(\d+)$/i)
+  if (!match) {
+    return null
+  }
+
+  return {
+    width: match[1],
+    height: match[2],
+  }
+}
+
 function splitDeclarationAndText(line: string): {
   declaration: string
   text?: string
@@ -805,8 +1015,8 @@ function splitDeclarationAndText(line: string): {
         continue
       }
 
-      const declaration = line.slice(0, i)
-      const text = line.slice(i + 1)
+        const declaration = line.slice(0, i).trimEnd()
+        const text = line.slice(i + 1).trimStart()
       return {
         declaration,
         text: text.length > 0 ? text : undefined,
@@ -884,6 +1094,28 @@ function tokenizeAttributes(content: string): string[] {
 
     if (/\s/.test(char)) {
       if (token.length > 0) {
+        let lookAhead = i
+        while (lookAhead < content.length && /\s/.test(content[lookAhead])) {
+          lookAhead += 1
+        }
+
+        const nextChar = content[lookAhead]
+        const shouldMergeSplitChildDefault =
+          token.length === 1 &&
+          ALIAS_TAGS[token] !== undefined &&
+          Boolean(nextChar) &&
+          isIdentifierChar(nextChar)
+
+        if (
+          token.endsWith('=') ||
+          token.endsWith(':') ||
+          nextChar === '=' ||
+          nextChar === ':' ||
+          shouldMergeSplitChildDefault
+        ) {
+          continue
+        }
+
         tokens.push(token)
         token = ''
       }
@@ -924,6 +1156,34 @@ function applyAttributeToken(
   }
 
   const compactValue = stripQuotes(token)
+  const colonIndex = token.indexOf(':')
+  if (colonIndex > 0 && token.indexOf('=') === -1) {
+    const rawName = token.slice(0, colonIndex).trim()
+    const rawValue = token.slice(colonIndex + 1).trim()
+
+    if (isLikelyAttributeName(rawName)) {
+      const name = resolveAttributeNameForTag(rawName, node.tag)
+      const value = parseAttributeValue(name, rawValue, node.tag)
+
+      if (name === 'class') {
+        if (typeof value === 'string' && value) {
+          node.classes.push(...value.split(/\s+/).filter(Boolean))
+        }
+        return
+      }
+
+      if (name === 'id') {
+        if (typeof value === 'string' && value) {
+          node.id = value
+        }
+        return
+      }
+
+      node.attrs[name] = value
+      return
+    }
+  }
+
   if (
     node.tag === 'a' &&
     node.attrs.href === undefined &&
@@ -958,6 +1218,19 @@ function applyAttributeToken(
   ) {
     node.attrs.charset = compactValue
     return
+  }
+
+  if (
+    DIMENSIONAL_MEDIA_TAGS.has(node.tag.toLowerCase()) &&
+    node.attrs.width === undefined &&
+    node.attrs.height === undefined
+  ) {
+    const dimensions = parseDimensionToken(compactValue)
+    if (dimensions) {
+      node.attrs.width = dimensions.width
+      node.attrs.height = dimensions.height
+      return
+    }
   }
 
   const eqIndex = token.indexOf('=')
@@ -1019,6 +1292,165 @@ function applyAttributeToken(
   node.attrs[name] = value
 }
 
+function isLooseAttributeToken(token: string, node: SlimElementNode): boolean {
+  if (!token) {
+    return false
+  }
+
+  if (token.startsWith('[') && token.endsWith(']')) {
+    return true
+  }
+
+  if (token.includes('=')) {
+    return true
+  }
+
+  const colonIndex = token.indexOf(':')
+  if (colonIndex > 0) {
+    const key = token.slice(0, colonIndex)
+    if (ATTR_ALIASES[key] || key.length <= 2) {
+      return true
+    }
+  }
+
+  const compactValue = stripQuotes(token)
+  if (
+    node.tag === 'a' &&
+    node.attrs.href === undefined &&
+    looksLikeCompactValue(compactValue)
+  ) {
+    return true
+  }
+
+  if (
+    node.tag === 'img' &&
+    node.attrs.src === undefined &&
+    looksLikeCompactValue(compactValue)
+  ) {
+    return true
+  }
+
+  if (
+    node.tag === 'input' &&
+    node.attrs.type === undefined &&
+    COMMON_INPUT_TYPES.has(compactValue)
+  ) {
+    return true
+  }
+
+  if (
+    node.tag === 'meta' &&
+    node.attrs.charset === undefined &&
+    looksLikeMetaCharsetValue(compactValue)
+  ) {
+    return true
+  }
+
+  if (
+    DIMENSIONAL_MEDIA_TAGS.has(node.tag.toLowerCase()) &&
+    parseDimensionToken(compactValue) !== null &&
+    node.attrs.width === undefined &&
+    node.attrs.height === undefined
+  ) {
+    return true
+  }
+
+  const lowered = compactValue.toLowerCase()
+  return BOOLEAN_ATTRIBUTES.has(lowered)
+}
+
+function shouldIgnoreLoosePaddingToken(token: string, node: SlimElementNode): boolean {
+  const lowered = token.toLowerCase()
+
+  if (node.id?.toLowerCase() === lowered) {
+    return true
+  }
+
+  if (node.classes.some((className) => className.toLowerCase() === lowered)) {
+    return true
+  }
+
+  for (const [attrName, attrValue] of Object.entries(node.attrs)) {
+    if (attrName.toLowerCase() === lowered) {
+      return true
+    }
+
+    if (typeof attrValue === 'string' && attrValue.toLowerCase() === lowered) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function parseLooseInlineContent(
+  content: string,
+  node: SlimElementNode,
+  line: number,
+): string | undefined {
+  const tokens = tokenizeAttributes(content)
+  if (tokens.length === 0) {
+    return undefined
+  }
+
+  const firstToken = tokens[0]
+  if (!isLooseAttributeToken(firstToken, node)) {
+    return content.trim().length > 0 ? content.trim() : undefined
+  }
+
+  const textTokens: string[] = []
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token.startsWith('[') && token.endsWith(']')) {
+      const blockContent = token.slice(1, -1).trim()
+      if (blockContent) {
+        parseAttributesBlock(blockContent, node, line)
+      }
+      continue
+    }
+
+    if (isLooseAttributeToken(token, node)) {
+      const separatorIndex = token.indexOf('=') >= 0 ? token.indexOf('=') : token.indexOf(':')
+      if (separatorIndex > 0) {
+        const rawName = token.slice(0, separatorIndex).trim()
+        const name = resolveAttributeNameForTag(rawName, node.tag)
+        const valueParts = [token.slice(separatorIndex + 1).trim()]
+
+        if (VALUE_CONTINUATION_ATTRIBUTES.has(name.toLowerCase())) {
+          while (index + 1 < tokens.length) {
+            const nextToken = tokens[index + 1]
+            if (nextToken.startsWith('[') && nextToken.endsWith(']')) {
+              break
+            }
+
+            if (isLooseAttributeToken(nextToken, node) || shouldIgnoreLoosePaddingToken(nextToken, node)) {
+              break
+            }
+
+            valueParts.push(nextToken)
+            index += 1
+          }
+        }
+
+        applyAttributeToken(`${rawName}=${valueParts.join(' ')}`, node, line)
+      } else {
+        applyAttributeToken(token, node, line)
+      }
+      continue
+    }
+
+    if (shouldIgnoreLoosePaddingToken(token, node)) {
+      continue
+    }
+
+    textTokens.push(token)
+    break
+  }
+
+  return textTokens.length > 0 ? textTokens.join(' ') : undefined
+}
+
 function parseAttributesBlock(
   content: string,
   node: SlimElementNode,
@@ -1044,9 +1476,18 @@ function parseElementDeclaration(
   let tag = 'div'
 
   const firstChar = declaration[index]
-  if (ALIAS_TAGS[firstChar] && shouldUseTagAliasToken(declaration, index)) {
-    tag = ALIAS_TAGS[firstChar]
-    index += 1
+  const aliasTag = ALIAS_TAGS[firstChar]
+  if (aliasTag) {
+    const hasAliasBoundary = shouldUseTagAliasToken(declaration, index)
+    const hasRepeatedTagName = shouldConsumeRepeatedTagName(declaration, index + 1, aliasTag)
+    if (hasAliasBoundary || hasRepeatedTagName) {
+      tag = aliasTag
+      index += 1
+
+      if (hasRepeatedTagName) {
+        index += aliasTag.length
+      }
+    }
   } else if (isIdentifierChar(firstChar)) {
     const start = index
     while (index < declaration.length && isIdentifierChar(declaration[index])) {
@@ -1066,7 +1507,7 @@ function parseElementDeclaration(
     tag,
     classes: [],
     attrs: {},
-    text,
+    text: undefined,
     children: [],
     line: lineNumber,
   }
@@ -1089,6 +1530,59 @@ function parseElementDeclaration(
       if (!className) {
         throw new ParserIssue('Class selector is missing a name.', lineNumber, index)
       }
+
+      let separatorIndex = index
+      while (separatorIndex < declaration.length && /\s/.test(declaration[separatorIndex])) {
+        separatorIndex += 1
+      }
+
+      const separator = declaration[separatorIndex]
+
+      if (
+        (separator === '=' || separator === ':') &&
+        (ATTR_ALIASES[className] !== undefined || className.length <= 2)
+      ) {
+        let valueStart = separatorIndex + 1
+        while (valueStart < declaration.length && /\s/.test(declaration[valueStart])) {
+          valueStart += 1
+        }
+
+        let valueEnd = valueStart
+        let quote: '"' | "'" | null = null
+
+        while (valueEnd < declaration.length) {
+          const current = declaration[valueEnd]
+          if (quote) {
+            if (current === quote && declaration[valueEnd - 1] !== '\\') {
+              quote = null
+            }
+            valueEnd += 1
+            continue
+          }
+
+          if (current === '"' || current === "'") {
+            quote = current
+            valueEnd += 1
+            continue
+          }
+
+          if (/\s/.test(current)) {
+            break
+          }
+
+          valueEnd += 1
+        }
+
+        const rawValue = declaration.slice(valueStart, valueEnd).trim()
+        if (rawValue.length === 0) {
+          throw new ParserIssue('Invalid attribute value.', lineNumber, separatorIndex + 1)
+        }
+
+        applyAttributeToken(`${className}${separator}${rawValue}`, node, lineNumber)
+        index = valueEnd
+        continue
+      }
+
       node.classes.push(className)
       continue
     }
@@ -1155,6 +1649,13 @@ function parseElementDeclaration(
     )
   }
 
+  if (text) {
+    const looseText = parseLooseInlineContent(text, node, lineNumber)
+    if (looseText !== undefined) {
+      node.text = looseText
+    }
+  }
+
   if (VOID_TAGS.has(node.tag.toLowerCase()) && node.text) {
     throw new ParserIssue(
       `Void element <${node.tag}> cannot contain inline text.`,
@@ -1167,25 +1668,26 @@ function parseElementDeclaration(
 }
 
 export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
-  try {
-    const ast: SlimDocument = {
-      type: 'document',
-      children: [],
+  const ast: SlimDocument = {
+    type: 'document',
+    children: [],
+  }
+
+  const stack: Array<SlimDocument | SlimElementNode> = [ast]
+  let indentationMode: 'space' | 'tab' | 'depth-prefix' | null = null
+  let canUseDepthPrefix = true
+  const lines = source.replace(/\r\n?/g, '\n').split('\n')
+  const errors: SlimParseError[] = []
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index]
+    const lineNumber = index + 1
+
+    if (rawLine.trim().length === 0) {
+      continue
     }
 
-    const stack: Array<SlimDocument | SlimElementNode> = [ast]
-    let indentationMode: 'space' | 'tab' | 'depth-prefix' | null = null
-    let canUseDepthPrefix = true
-    const lines = source.replace(/\r\n?/g, '\n').split('\n')
-
-    for (let index = 0; index < lines.length; index += 1) {
-      const rawLine = lines[index]
-      const lineNumber = index + 1
-
-      if (rawLine.trim().length === 0) {
-        continue
-      }
-
+    try {
       const depthPrefixMatch = rawLine.match(/^(\d+)(\S.*)$/)
       if (!indentationMode && canUseDepthPrefix && looksLikeDepthPrefixedSlimLine(rawLine)) {
         indentationMode = 'depth-prefix'
@@ -1254,7 +1756,7 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
           depth = leadingSpaces / indentSize
         }
 
-        content = rawLine.slice(indentation.length)
+        content = rawLine.slice(indentation.length).trimStart()
       }
 
       if (depth > stack.length - 1) {
@@ -1318,33 +1820,35 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
       if (node.type === 'element' && !VOID_TAGS.has(node.tag.toLowerCase())) {
         stack.push(node)
       }
-    }
-
-    return {
-      ok: true,
-      ast,
-      warnings: [],
-    }
-  } catch (error) {
-    if (error instanceof ParserIssue) {
-      return {
-        ok: false,
-        error: {
+    } catch (error) {
+      if (error instanceof ParserIssue) {
+        errors.push({
           message: error.message,
           line: error.line,
           column: error.column,
-        },
+        })
+        continue
       }
+      errors.push({
+        message: 'Unknown parser error.',
+        line: lineNumber,
+        column: 1,
+      })
+      continue
     }
+  }
 
+  if (errors.length > 0) {
     return {
       ok: false,
-      error: {
-        message: 'Unknown parser error.',
-        line: 1,
-        column: 1,
-      },
+      errors,
     }
+  }
+
+  return {
+    ok: true,
+    ast,
+    warnings: [],
   }
 }
 
@@ -1673,6 +2177,21 @@ function quoteSlimValue(value: string): string {
   return JSON.stringify(value)
 }
 
+function prepareAttributeValueForSlimEmission(
+  attributeName: string,
+  tag: string,
+  value: string,
+  compact: boolean,
+): string {
+  const aliasedValue = resolveAttributeValueOutputAlias(attributeName, tag, value, compact)
+
+  if (compact && attributeName.toLowerCase() === 'style' && !isSlimExpressionValue(aliasedValue)) {
+    return normalizeInlineStyleValue(aliasedValue, 'emit')
+  }
+
+  return aliasedValue
+}
+
 function flattenInlineText(node: SlimElementNode): string | undefined {
   if (node.text && node.children.length === 0) {
     return node.text
@@ -1720,17 +2239,18 @@ function emitElementDeclaration(
 
   const tokens: string[] = []
   const attrs = { ...emissionContext.attrs }
+  const typeValue = typeof attrs.type === 'string' ? attrs.type.toLowerCase() : undefined
 
   const isDefaultInputTextType =
-    lowerTag === 'input' && attrs.type === 'text'
+    lowerTag === 'input' && typeValue === 'text'
   const isDefaultFormSubmitType =
     lowerTag === 'button' &&
     parent?.tag.toLowerCase() === 'form' &&
-    attrs.type === 'submit'
+    typeValue === 'submit'
   const isDefaultButtonType =
     lowerTag === 'button' &&
     parent?.tag.toLowerCase() !== 'form' &&
-    attrs.type === 'button'
+    typeValue === 'button'
 
   if (compact && (isDefaultInputTextType || isDefaultFormSubmitType || isDefaultButtonType)) {
     delete attrs.type
@@ -1791,6 +2311,21 @@ function emitElementDeclaration(
     delete attrs.src
   }
 
+  if (compact && DIMENSIONAL_MEDIA_TAGS.has(lowerTag)) {
+    const widthValue = attrs.width
+    const heightValue = attrs.height
+    if (
+      typeof widthValue === 'string' &&
+      typeof heightValue === 'string' &&
+      /^\d+$/.test(widthValue) &&
+      /^\d+$/.test(heightValue)
+    ) {
+      tokens.push(`${widthValue}x${heightValue}`)
+      delete attrs.width
+      delete attrs.height
+    }
+  }
+
   if (compact && typeof attrs.charset === 'string' && lowerTag === 'meta') {
     tokens.push(quoteSlimValue(attrs.charset))
     delete attrs.charset
@@ -1806,7 +2341,7 @@ function emitElementDeclaration(
       continue
     }
 
-    const outputValue = resolveAttributeValueOutputAlias(name, node.tag, value, compact)
+    const outputValue = prepareAttributeValueForSlimEmission(name, node.tag, value, compact)
     tokens.push(`${outputName}=${quoteSlimValue(outputValue)}`)
   }
 
@@ -1831,7 +2366,7 @@ function emitElementDeclaration(
           continue
         }
 
-        const outputValue = resolveAttributeValueOutputAlias(name, childTag, value, compact)
+        const outputValue = prepareAttributeValueForSlimEmission(name, childTag, value, compact)
         tokens.push(`${childToken}${outputName}=${quoteSlimValue(outputValue)}`)
       }
     }
@@ -2137,7 +2672,7 @@ export function compressSlimLossless(
   options: SlimCompileOptions = {},
 ):
   | { ok: true; slim: string; ast: SlimDocument; warnings: string[] }
-  | { ok: false; error: SlimParseError } {
+  | { ok: false; errors: SlimParseError[] } {
   const parsed = parseSlimML(source)
   if (!parsed.ok) {
     return parsed
@@ -2198,6 +2733,14 @@ export function compareTokenUsage(slim: string, html: string): TokenComparison {
   }
 }
 
-export function formatParseError(error: SlimParseError): string {
-  return `Line ${error.line}, column ${error.column}: ${error.message}`
+export function formatParseError(error: SlimParseError | SlimParseError[]): string {
+  const errArray = Array.isArray(error) ? error : [error]
+  if (errArray.length === 0) return 'Unknown error.'
+  if (errArray.length === 1) {
+    const err = errArray[0]
+    return `Line ${err.line}, column ${err.column}: ${err.message}`
+  }
+  return errArray
+    .map((err) => `• Line ${err.line}, col ${err.column}: ${err.message}`)
+    .join('\n')
 }

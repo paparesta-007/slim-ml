@@ -7,76 +7,72 @@
 
 .hero-panel {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   text-align: left;
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: 16px;
   padding: 1.5rem;
-  background:
-    radial-gradient(circle at 90% 10%, rgba(255, 149, 0, 0.2), transparent 44%),
-    radial-gradient(circle at 8% 90%, rgba(46, 110, 255, 0.2), transparent 45%),
-    linear-gradient(140deg, var(--panel), var(--panel-alt));
-  box-shadow: 0 18px 50px rgba(4, 14, 35, 0.15);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(243, 246, 244, 0.94));
+  box-shadow: 0 12px 30px rgba(24, 33, 38, 0.08);
   animation: rise-in 500ms ease-out;
 }
 
-.eyebrow {
-  margin: 0;
-  font-size: 0.84rem;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-  color: var(--accent-2);
-  font-weight: 700;
-}
-
-.hero-panel h1 {
-  margin: 0.35rem 0 0;
-  font-size: clamp(2rem, 4vw, 3.8rem);
+.hero-main h1 {
+  margin: 0.2rem 0 0;
+  font-size: clamp(1.8rem, 3.5vw, 2.5rem);
   line-height: 1.02;
   letter-spacing: -0.03em;
+  font-family: var(--mono);
 }
 
 .subtitle {
-  margin-top: 0.8rem;
-  max-width: 68ch;
+  margin-top: 0.4rem;
+  max-width: 40ch;
   color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .stats-grid {
-  margin-top: 1.2rem;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.8rem;
+  display: flex;
+  gap: 0.5rem;
 }
 
 .stat-card {
-  border: 1px solid var(--line-soft);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.66);
-  padding: 0.85rem 0.95rem;
-  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.76);
+  padding: 0.6rem 0.8rem;
+  min-width: 130px;
 }
 
 .stat-card h2 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .stat-card p {
-  margin: 0.36rem 0 0;
-  font-size: clamp(1.2rem, 2.6vw, 2rem);
+  margin: 0.2rem 0 0;
+  font-size: 1.8rem;
   font-weight: 700;
   color: var(--ink);
+  line-height: 1;
 }
 
 .stat-card span {
-  font-size: 0.82rem;
+  font-size: 0.75rem;
   color: var(--muted);
+  display: block;
+  margin-top: 0.2rem;
 }
 
 .stat-card-accent {
-  background: linear-gradient(135deg, rgba(255, 149, 0, 0.2), rgba(46, 110, 255, 0.22));
+  background: linear-gradient(135deg, rgba(90, 104, 116, 0.12), rgba(75, 143, 103, 0.18));
 }
 
 .workspace-grid {
@@ -85,13 +81,49 @@
   gap: 1rem;
 }
 
-.panel {
+.panel-full {
+  grid-column: 1 / -1;
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 14px;
   padding: 1rem;
   text-align: left;
-  background: color-mix(in oklab, var(--panel) 92%, white 8%);
-  box-shadow: 0 8px 26px rgba(2, 12, 34, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 22px rgba(24, 33, 38, 0.06);
+}
+
+.dom-preview-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.dom-preview-panel[data-fullscreen="true"] {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1000;
+  background: #fff;
+  border-radius: 0;
+  margin: 0;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.dom-preview-panel[data-fullscreen="true"] .dom-preview-frame,
+.dom-preview-panel[data-fullscreen="true"] .dom-empty {
+  flex: 1;
+  min-height: 0;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 22px rgba(24, 33, 38, 0.06);
 }
 
 .toolbar {
@@ -134,7 +166,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0.28rem 0.58rem;
   background: rgba(255, 255, 255, 0.85);
@@ -151,7 +183,7 @@
 }
 
 .mode-select {
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: 10px;
   background: #fff;
   color: var(--ink);
@@ -165,10 +197,10 @@
 }
 
 .action-btn {
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0.52rem 0.9rem;
-  background: #fffaf2;
+  background: #f7f9f8;
   color: var(--ink);
   font: 700 0.84rem/1 var(--sans);
   cursor: pointer;
@@ -186,7 +218,7 @@
 }
 
 .action-btn-accent {
-  background: linear-gradient(130deg, #ffe0b5, #dce7ff);
+  background: linear-gradient(130deg, rgba(75, 143, 103, 0.16), rgba(90, 104, 116, 0.14));
 }
 
 .panel-head {
@@ -195,6 +227,18 @@
   align-items: baseline;
   gap: 0.8rem;
   margin-bottom: 0.72rem;
+}
+
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.panel-head-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
 }
 
 .panel-head h2 {
@@ -213,14 +257,14 @@
 .dom-empty {
   min-height: 270px;
   border-radius: 12px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
 }
 
 .editor-shell {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  min-height: 270px;
-  border: 1px solid var(--line-soft);
+  height: 320px;
+  border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
   background: var(--code-bg);
@@ -233,9 +277,9 @@
   padding: 0.86rem 0.56rem;
   box-sizing: border-box;
   overflow: hidden;
-  border-right: 1px solid var(--line-soft);
-  color: #6f7d96;
-  background: color-mix(in oklab, var(--code-bg) 92%, #dde5ff 8%);
+  border-right: 1px solid var(--line);
+  color: #66707a;
+  background: #e8ece9;
   text-align: right;
   user-select: none;
   font: 500 0.84rem/1.5 var(--mono);
@@ -244,7 +288,8 @@
 
 .editor-stack {
   position: relative;
-  min-height: 270px;
+  min-height: 0;
+  height: 100%;
   background: var(--code-bg);
 }
 
@@ -255,23 +300,34 @@
   overflow: hidden;
   padding: 0.86rem;
   box-sizing: border-box;
-  color: #1a2340;
+  color: #1c2629;
   font: 500 0.9rem/1.5 var(--mono);
   white-space: pre;
+  word-wrap: normal;
+  tab-size: 2;
   pointer-events: none;
 }
 
 .editor {
   width: 100%;
+  height: 100%;
+  margin: 0;
   resize: none;
   padding: 0.86rem;
   box-sizing: border-box;
   background: var(--code-bg);
   color: var(--ink);
   font: 500 0.9rem/1.5 var(--mono);
+  white-space: pre;
+  word-wrap: normal;
+  tab-size: 2;
   border: 0;
   border-radius: 0;
-  min-height: 270px;
+  min-height: 0;
+  display: block;
+  overflow: auto;
+  scrollbar-color: var(--line) var(--code-bg);
+  scrollbar-width: thin;
 }
 
 .editor-overlay {
@@ -281,6 +337,7 @@
   color: transparent;
   caret-color: var(--ink);
   -webkit-text-fill-color: transparent;
+  overscroll-behavior: contain;
 }
 
 .editor-plain {
@@ -380,6 +437,8 @@
   font-size: 0.84rem;
   border-radius: 8px;
   padding: 0.5rem 0.6rem;
+  white-space: pre-wrap;
+  font-family: var(--mono);
 }
 
 .status-ok {

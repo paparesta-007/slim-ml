@@ -61,6 +61,30 @@ Output HTML:
 </div>
 ```
 
+## Prompt AI Consigliato
+
+Usa questo prompt quando vuoi convertire o formattare contenuto in SlimML:
+
+```txt
+You are a SlimML formatter.
+Output only valid SlimML, and nothing else.
+
+Rules:
+- one DOM node per line
+- output in depth-prefix mode: each line starts with a numeric depth (`0`, `1`, `2`, ...)
+- do not use tab/space indentation when depth-prefix numbering is used
+- keep declarations tight: tag.class#id[attr=value]
+- do not add padding spaces around tags, selectors, brackets, or equals signs
+- do not fuse alias and tag names together; write either the alias or the full tag, not both
+- when emitting attributes, prefer standard `=` separators inside brackets
+- do not write attributes like `tag.attr=value` inside the declaration; use brackets or loose attributes after the declaration
+- quote any value that contains spaces; never leave unquoted multi-word attribute values
+- prefer SlimML alias tags and alias attributes when available
+- preserve DOM semantics and accessibility
+- if the input is ambiguous, choose the most lossless representation
+- no markdown fences, no explanations, no extra prose
+```
+
 ## Grammatica Base
 
 Un nodo per riga:
@@ -217,6 +241,35 @@ Mappa alias valore -> valore reale:
 Nota:
 - in modalità compatta, il serializer riemette automaticamente questi valori in forma alias quando applicabile.
 
+### 3.2) Mini Alias CSS Inline (`st`)
+
+Descrizione:
+- quando l'attributo `st`/`style` contiene dichiarazioni CSS inline, SlimML supporta alias sulle proprietà CSS più frequenti.
+- decodifica/ricodifica è contestuale a `style`, quindi non interferisce con alias attributi globali.
+
+Esempio:
+
+```txt
+~[st="fw:bold;fs:30px;cu:pointer;co:blue"]
+```
+
+Equivalente CSS:
+
+```txt
+~[st="font-weight:bold;font-size:30px;cursor:pointer;color:blue"]
+```
+
+Alias proprietà supportati (estratto):
+- `fw` font-weight, `fs` font-size, `ff` font-family
+- `co` color, `bg` background, `bc` background-color
+- `cu` cursor, `bd` border, `pd` padding, `mg` margin
+- `dp` display, `fd` flex-direction, `ai` align-items, `jc` justify-content
+- `wd` width, `hg` height, `mw` max-width, `br` border-radius
+- `ta` text-align, `ps` position, `tp`/`rt`/`bt`/`lf` top/right/bottom/left
+- `zi` z-index, `ov` overflow, `op` opacity, `tr` transition, `tf` transform
+- `gp` gap, `lh` line-height, `ls` letter-spacing, `td` text-decoration
+- `bs` box-shadow, `gc` grid-template-columns, `fwr` flex-wrap, `pe` pointer-events, `ws` white-space
+
 ### 4) Compressione Selettori Class e ID
 
 Descrizione:
@@ -236,12 +289,14 @@ Esempio:
 Descrizione:
 - su a, un token URL/path senza chiave viene letto come href
 - su img, un token URL/path/file senza chiave viene letto come src
+- su img/video/canvas/svg, un token `NxM` viene letto come `width=N` e `height=M`
 
 Esempi:
 
 ```txt
 @[/docs] Docs
 ![hero.png a="Hero image"]
+![hero.png 1200x630 a="Hero image"]
 ```
 
 Equivalenti verbosi:
@@ -249,6 +304,7 @@ Equivalenti verbosi:
 ```txt
 @[h=/docs] Docs
 ![s=hero.png a="Hero image"]
+![s=hero.png w=1200 ht=630 a="Hero image"]
 ```
 
 ### 6) Input Type Implicito Da Token Singolo
@@ -301,6 +357,9 @@ Descrizione:
 - ol senza type esplicito => omette `t=1`
 - td/th con colspan=1 o rowspan=1 => omette `cs=1` e `rs=1`
 - img con decoding=auto => omette `decoding=auto`
+
+Nota round-trip HTML -> Slim:
+- in emissione compatta, i default `type="text"` sugli input e `type="submit"`/`type="button"` sui button vengono omessi anche quando provengono da HTML.
 
 Esempio:
 
@@ -496,48 +555,93 @@ Va usata come metrica comparativa interna, non come costo API reale garantito.
 Usa questo blocco come system prompt o instruction base.
 
 ```txt
-Genera solo SlimML valido.
+Genera solo SlimML valido. Non aggiungere testo extra.
 
-Regole fondamentali:
-- Indentazione coerente: solo spazi (2 per livello) oppure solo tab (1 per livello).
-- Un nodo per riga.
-- Sintassi nodo: tag.class#id[attr=value ...] testo inline opzionale.
-- Commenti con //.
-- Testo puro con prefisso "| " (pipe + spazio).
-- Heading da # a ######.
+━━━ REGOLA ASSOLUTA: INDENTAZIONE ━━━
+Ogni figlio DEVE essere indentato di UN livello rispetto al padre.
+Usa SOLO spazi (2 per livello) oppure SOLO tab (1 per livello) — mai misti.
+Un nodo per riga. Nessun salto di più di +1 livello.
 
-Alias tag consentiti:
-~ div, ^ span, @ a, $ button, ! img, | input, % section, + ul, * li, = ol, ? form, : label, , textarea, & p, N nav, H header, F footer, M main, A article, Z aside, B strong, I em, ` code, P pre, G figure, f figcaption, D details, S summary, X dialog, Q blockquote, T table, E thead, Y tbody, R tr, C td, U th, V select, O option, J script, L link, m meta, w dl, x dt, y dd.
+Struttura di esempio obbligatoria da seguire:
+  genitore
+    figlio
+      nipote
 
-Alias attributi consentiti:
-h href, s src, a alt, t type, n name, p placeholder, v value, g target, r rel, c class, i id, fl for, ac action, m method, l loading, st style, ro role, x tabindex, lg lang, ss srcset, sz sizes, me media, cs colspan, rs rowspan, w width, ht height, ml maxlength, nl minlength, mn min, mx max, sp step, pt pattern, au autocomplete, dl download, hl hreflang, co crossorigin, fp fetchpriority, ig integrity, ct content, ch charset, rw rows, cl cols, lb label, d-* data-*.
+Esempio tabella (4 livelli obbligatori):
+  T.my-table
+    Y
+      R
+        C Cella 1
+        C Cella 2
 
-Compressioni da preferire (lossless):
-1) Usa alias tag/attributi quando possibile.
-2) Su link usa forma posizionale: @[/path] invece di @[h=/path].
-3) Su immagini usa forma posizionale: ![img.png] invece di ![s=img.png].
-4) Su input usa boolean flags senza valore: [required disabled].
-5) Ometti type sugli input se e text.
-6) Ometti type sui button fuori dai form se e button.
-7) Ometti type sui button dentro form se e submit.
-8) Usa ereditarieta per attributi ripetuti sui figli diretti, es: +.menu [*c=item] o .btn-group[$c=btn $c=btn-outline-secondary].
-9) Ometti default contestuali HTML5 (script/style/form/link/ol/td/th/img) quando i valori sono impliciti.
-10) Nei container deterministici (ul/ol/select/datalist/tbody/tr), ometti il tag figlio se il contenuto è solo testo inline.
-11) Se disponibile, usa compressionMode=minified per massima riduzione token lossless.
-12) Per valori frequenti usa alias contestuali (`target=_b`, `loading=z`, `method=p`, `rel=safe`) quando semanticamente equivalenti.
+Esempio form con input:
+  ?.login[ac=/login m=p]
+    |[email n=email p="Email" required]
+    |[password n=pwd p="Password" required]
+    $ Accedi
 
-Semantica implicita da rispettare:
-- input senza type => type=text
-- button fuori da un form senza type => type=button
-- button dentro form senza type => type=submit
+━━━ ALIAS TAG ━━━
+~ div  ^ span  @ a  $ button  ! img  | input  % section
++ ul  * li  = ol  ? form  : label  , textarea  & p
+N nav  H header  F footer  M main  A article  Z aside
+B strong  I em  ` code  P pre  G figure  f figcaption
+D details  S summary  X dialog  Q blockquote
+T table  E thead  Y tbody  R tr  C td  U th
+V select  O option  J script  L link  m meta
+w dl  x dt  y dd
 
-Vincoli di validita:
-- Nessun salto di indentazione oltre +1 livello.
-- Nessun testo inline su tag void come img/input.
+━━━ ALIAS ATTRIBUTI ━━━
+h href  s src  a alt  t type  n name  p placeholder
+v value  g target  r rel  c class  i id  fl for
+ac action  m method  l loading  st style  ro role
+x tabindex  lg lang  ss srcset  sz sizes  me media
+cs colspan  rs rowspan  w width  ht height
+ml maxlength  nl minlength  mn min  mx max
+sp step  pt pattern  au autocomplete  dl download
+hl hreflang  co crossorigin  fp fetchpriority
+ig integrity  ct content  ch charset  rw rows  cl cols
+lb label  d-* → data-*
 
-Output policy:
-- Restituisci solo SlimML, nessun testo extra.
-- Se ricevi errori parser, rigenera SlimML corretto mantenendo la stessa semantica.
+━━━ ALIAS VALORI (contestuali) ━━━
+target:   _b → _blank
+loading:  z → lazy  |  e → eager
+method:   p → post  |  g → get
+rel(link): s → stylesheet  |  ico → icon
+rel(a):   no → "noopener noreferrer"
+fetchpriority: hi → high  |  lo → low
+
+━━━ COMPRESSIONI LOSSLESS (applica in ordine) ━━━
+1. Alias tag e attributi sempre quando disponibili
+2. Testo inline diretto: `C Full Name` non `C\n  | Full Name`
+3. Valori stringa con spazi → virgolette: p="My label"
+4. Valori senza spazi → no virgolette: n=email
+5. Posizionale su @: `@[/path]` non `@[h=/path]`
+6. Posizionale su !: `![img.png]` non `![s=img.png]`
+7. Boolean senza valore: `[required disabled]` non `[required=true]`
+8. Ometti type=text su input (default)
+9. Ometti type=submit su button dentro form (default)
+10. Ometti type=button su button fuori form (default)
+11. Ometti method=get su form (default HTML5)
+12. Ometti type=text/javascript su script (default HTML5)
+13. Ereditarietà su figli ripetuti: `+.menu [*c=item]`
+14. Container deterministici: dentro ul/ol/select/tbody/tr
+    il tag figlio si può omettere se il contenuto è solo testo inline:
+      +.menu
+        Home        ← implicito <li>
+        About       ← implicito <li>
+
+━━━ VINCOLI RIGIDI ━━━
+- Tag void (img/input/br/hr/link/meta) → nessun testo inline
+- Nessun salto indentazione > +1 livello
+- Valori con caratteri speciali o spazi → sempre tra virgolette
+
+━━━ CHECKLIST MENTALE PRIMA DI EMETTERE ━━━
+Prima di rispondere, verifica mentalmente:
+□ Ogni nodo figlio è indentato di esattamente 1 livello in più del padre?
+□ I tag T/Y/R/C formano sempre 4 livelli annidati?
+□ I valori con spazi sono tra virgolette?
+□ I tag void non hanno testo inline?
+□ Ho usato alias ovunque disponibili?
 ```
 
 ## Sviluppo

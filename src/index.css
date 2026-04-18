@@ -1,14 +1,14 @@
 :root {
-  --bg: #f6efe2;
-  --ink: #1f2640;
-  --muted: #5b637a;
-  --panel: rgba(255, 255, 255, 0.92);
-  --panel-alt: rgba(246, 250, 255, 0.95);
-  --line: rgba(24, 47, 96, 0.16);
-  --line-soft: rgba(24, 47, 96, 0.08);
-  --code-bg: #eff3ff;
-  --accent: #ff9500;
-  --accent-2: #2e6eff;
+  --bg: #f4f7f5;
+  --ink: #10171b;
+  --muted: #5d676f;
+  --panel: rgba(255, 255, 255, 0.9);
+  --panel-alt: rgba(247, 249, 248, 0.96);
+  --line: rgba(90, 100, 106, 0.34);
+  --line-soft: rgba(90, 100, 106, 0.18);
+  --code-bg: #edf1ef;
+  --accent: #4d8f68;
+  --accent-2: #5c6870;
   --sans: 'Space Grotesk', 'Avenir Next', 'Gill Sans', 'Segoe UI', sans-serif;
   --mono: 'IBM Plex Mono', 'Fira Code', 'Cascadia Code', monospace;
 
@@ -27,9 +27,10 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    radial-gradient(circle at 2% 2%, #ffdcb0 0%, transparent 35%),
-    radial-gradient(circle at 98% 8%, #d7e5ff 0%, transparent 38%),
-    linear-gradient(180deg, #f9f4ec, #f2f5fd);
+    linear-gradient(rgba(90, 100, 106, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(90, 100, 106, 0.06) 1px, transparent 1px),
+    linear-gradient(180deg, #f9fbfa, #eef2f0);
+  background-size: 28px 28px, 28px 28px, auto;
   min-height: 100svh;
 }
 

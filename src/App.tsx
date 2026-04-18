@@ -400,7 +400,7 @@ function buildPreviewDocument(
 ): string {
   const frameworkTags = [
     useBootstrap
-      ? '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css">'
+      ? '<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">\n<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>'
       : '',
     useTailwind ? '<script src="https://cdn.tailwindcss.com"></script>' : '',
   ]
@@ -510,7 +510,7 @@ function interpretSlimSource(
   if (!looksLikeHtmlOrJsx(source)) {
     return {
       ok: false,
-      error: formatParseError(parsedSlim.error),
+      error: formatParseError(parsedSlim.errors),
     }
   }
 
@@ -519,7 +519,7 @@ function interpretSlimSource(
   if (!converted.ok) {
     return {
       ok: false,
-      error: `Slim parse failed: ${formatParseError(parsedSlim.error)} | HTML/JSX parse failed: ${converted.error}`,
+      error: `Slim parse failed:\n${formatParseError(parsedSlim.errors)}\n\nHTML/JSX parse failed:\n${converted.error}`,
     }
   }
 
@@ -542,6 +542,7 @@ function App() {
   const [compressionMode, setCompressionMode] = useState<SlimCompressionMode>('aggressive')
   const [useBootstrapPreview, setUseBootstrapPreview] = useState(false)
   const [useTailwindPreview, setUseTailwindPreview] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [actionMessage, setActionMessage] = useState('Ready.')
   const [lastEdited, setLastEdited] = useState<'slim' | 'html' | null>(null)
   const slimEditorRef = useRef<HTMLTextAreaElement>(null)
@@ -749,7 +750,7 @@ function App() {
 
     const compressed = compressSlimLossless(sourceToCompress, { compressionMode })
     if (!compressed.ok) {
-      setActionMessage(`Slim compression failed: ${formatParseError(compressed.error)}`)
+      setActionMessage(`Slim compression failed: ${formatParseError(compressed.errors)}`)
       return
     }
 
@@ -763,12 +764,11 @@ function App() {
   return (
     <div className="app-shell">
       <header className="hero-panel">
-        <p className="eyebrow">AI-Native Markup Lab</p>
-        <h1>SlimML Bidirectional Playground</h1>
-        <p className="subtitle">
-          Edit both sources freely. Convert in either direction and apply
-          lossless compression in selectable modes.
-        </p>
+        <div className="hero-main">
+          <p className="eyebrow">E.g.</p>
+          <h1>SlimML</h1>
+          <p className="subtitle">lossless compressor built with AI for the AI</p>
+        </div>
 
         <div className="stats-grid" role="list" aria-label="Compression metrics">
           <article role="listitem" className="stat-card">
@@ -876,8 +876,10 @@ function App() {
       <main className="workspace-grid">
         <section className="panel">
           <div className="panel-head">
-            <h2>SlimML Editor</h2>
-            <p>Extended compact aliases enabled</p>
+            <div className="panel-head-title">
+              <h2>SlimML Editor</h2>
+              <p>Extended compact aliases enabled</p>
+            </div>
           </div>
           <label htmlFor="slimml-editor" className="sr-only">
             SlimML source editor
@@ -898,6 +900,7 @@ function App() {
                 ref={slimEditorRef}
                 className="editor editor-overlay"
                 spellCheck={false}
+                wrap="off"
                 value={slimSource}
                 onScroll={(event) => syncSlimEditorDecorators(event.currentTarget)}
                 onKeyDown={(event) =>
@@ -917,8 +920,10 @@ function App() {
 
         <section className="panel">
           <div className="panel-head">
-            <h2>HTML Editor</h2>
-            <p>Writable source for reverse conversion</p>
+            <div className="panel-head-title">
+              <h2>HTML Editor</h2>
+              <p>Writable source for reverse conversion</p>
+            </div>
           </div>
           <label htmlFor="html-editor" className="sr-only">
             HTML source editor
@@ -932,6 +937,7 @@ function App() {
               ref={htmlEditorRef}
               className="editor editor-plain"
               spellCheck={false}
+              wrap="off"
               value={htmlSource}
               onScroll={(event) => syncHtmlGutterScroll(event.currentTarget)}
               onKeyDown={(event) =>
@@ -948,18 +954,31 @@ function App() {
           </p>
         </section>
 
-        <section className="panel">
+        <section className="panel-full">
           <div className="panel-head">
-            <h2>Compact Slim Preview</h2>
-            <p>{COMPRESSION_MODE_LABELS[compressionMode]} mode output</p>
+            <div className="panel-head-title">
+              <h2>Compact Slim Preview</h2>
+              <p>{COMPRESSION_MODE_LABELS[compressionMode]} mode output</p>
+            </div>
           </div>
           <pre className="code-block">{compressedSlim || 'Fix Slim parser errors to compress.'}</pre>
         </section>
 
-        <section className="panel">
+        <section className="panel-full dom-preview-panel" data-fullscreen={isFullscreen}>
           <div className="panel-head">
-            <h2>DOM Preview</h2>
-            <p>Uses whichever source currently parses</p>
+            <div className="panel-head-title">
+              <h2>DOM Preview</h2>
+              <p>Uses whichever source currently parses</p>
+            </div>
+            <div className="panel-head-actions">
+              <button 
+                type="button" 
+                className="action-btn" 
+                onClick={() => setIsFullscreen(!isFullscreen)}
+              >
+                {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+              </button>
+            </div>
           </div>
           {previewAst ? (
             <DomPreview
