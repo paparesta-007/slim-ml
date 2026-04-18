@@ -113,6 +113,36 @@ Mappa alias -> tag:
 - : -> label
 - , -> textarea
 - & -> p
+- N -> nav
+- H -> header
+- F -> footer
+- M -> main
+- A -> article
+- Z -> aside
+- B -> strong
+- I -> em
+- ` -> code
+- P -> pre
+- G -> figure
+- f -> figcaption
+- D -> details
+- S -> summary
+- X -> dialog
+- Q -> blockquote
+- T -> table
+- E -> thead
+- Y -> tbody
+- R -> tr
+- C -> td
+- U -> th
+- V -> select
+- O -> option
+- J -> script
+- L -> link
+- m -> meta
+- w -> dl
+- x -> dt
+- y -> dd
 
 Vantaggio:
 - riduzione lessicale costante e lossless.
@@ -131,6 +161,38 @@ Mappa alias -> attributo:
 - r -> rel
 - c -> class
 - i -> id
+- fl -> for
+- ac -> action
+- m -> method
+- l -> loading
+- st -> style
+- ro -> role
+- x -> tabindex
+- lg -> lang
+- ss -> srcset
+- sz -> sizes
+- me -> media
+- cs -> colspan
+- rs -> rowspan
+- w -> width
+- ht -> height
+- ml -> maxlength
+- nl -> minlength
+- mn -> min
+- mx -> max
+- sp -> step
+- pt -> pattern
+- au -> autocomplete
+- dl -> download
+- hl -> hreflang
+- co -> crossorigin
+- fp -> fetchpriority
+- ig -> integrity
+- ct -> content
+- ch -> charset
+- rw -> rows
+- cl -> cols
+- lb -> label
 - d-* -> data-*
 
 Vantaggio:
@@ -395,10 +457,10 @@ Regole fondamentali:
 - Heading da # a ######.
 
 Alias tag consentiti:
-~ div, ^ span, @ a, $ button, ! img, | input, % section, + ul, * li, = ol, ? form, : label, , textarea, & p.
+~ div, ^ span, @ a, $ button, ! img, | input, % section, + ul, * li, = ol, ? form, : label, , textarea, & p, N nav, H header, F footer, M main, A article, Z aside, B strong, I em, ` code, P pre, G figure, f figcaption, D details, S summary, X dialog, Q blockquote, T table, E thead, Y tbody, R tr, C td, U th, V select, O option, J script, L link, m meta, w dl, x dt, y dd.
 
 Alias attributi consentiti:
-h href, s src, a alt, t type, n name, p placeholder, v value, g target, r rel, c class, i id, d-* data-*.
+h href, s src, a alt, t type, n name, p placeholder, v value, g target, r rel, c class, i id, fl for, ac action, m method, l loading, st style, ro role, x tabindex, lg lang, ss srcset, sz sizes, me media, cs colspan, rs rowspan, w width, ht height, ml maxlength, nl minlength, mn min, mx max, sp step, pt pattern, au autocomplete, dl download, hl hreflang, co crossorigin, fp fetchpriority, ig integrity, ct content, ch charset, rw rows, cl cols, lb label, d-* data-*.
 
 Compressioni da preferire (lossless):
 1) Usa alias tag/attributi quando possibile.

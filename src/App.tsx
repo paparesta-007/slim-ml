@@ -76,7 +76,25 @@ interface DomPreviewProps {
   useTailwind: boolean
 }
 
-const SLIM_ALIAS_TAGS = new Set(['~', '^', '@', '$', '!', '|', '%', '+', '*', '=', '?', ':', ',', '&'])
+const SLIM_ALIAS_TAGS = new Set([
+  '~', '^', '@', '$', '!', '|', '%', '+', '*', '=', '?', ':', ',', '&',
+  'N', 'H', 'F', 'M', 'A', 'Z', 'B', 'I', '`', 'P', 'G', 'f', 'D', 'S', 'X',
+  'Q', 'T', 'E', 'Y', 'R', 'C', 'U', 'V', 'O', 'J', 'L', 'm', 'w', 'x', 'y',
+])
+
+function shouldUseTagAliasToken(declaration: string, index = 0): boolean {
+  const aliasToken = declaration[index]
+  if (!/[a-zA-Z]/.test(aliasToken)) {
+    return true
+  }
+
+  const nextChar = declaration[index + 1]
+  if (!nextChar) {
+    return true
+  }
+
+  return nextChar === '.' || nextChar === '#' || nextChar === '[' || /\s/.test(nextChar)
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -248,7 +266,7 @@ function highlightDeclaration(declaration: string): string {
   let output = ''
 
   const firstChar = declaration[index]
-  if (SLIM_ALIAS_TAGS.has(firstChar)) {
+  if (SLIM_ALIAS_TAGS.has(firstChar) && shouldUseTagAliasToken(declaration, index)) {
     output += `<span class="sl-token-tag">${escapeHtml(firstChar)}</span>`
     index += 1
   } else if (/[a-zA-Z]/.test(firstChar)) {
@@ -963,11 +981,11 @@ function App() {
         <div className="cheats-grid">
           <article>
             <h3>Tag Aliases</h3>
-            <p>~ div, &amp; p, @ a, ! img, + ul, * li, % section</p>
+            <p>Base aliases plus semantic set: N nav, H header, M main, A article, B strong, T table, V select</p>
           </article>
           <article>
             <h3>Attr Aliases</h3>
-            <p>h href, s src, a alt, t type, g target, p placeholder</p>
+            <p>Core aliases + extended set: fl for, ac action, ro role, w width, ht height, ss srcset, sz sizes</p>
           </article>
           <article>
             <h3>Implicit Defaults</h3>

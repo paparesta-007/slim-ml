@@ -93,6 +93,36 @@ const ALIAS_TAGS: Record<string, string> = {
   ':': 'label',
   ',': 'textarea',
   '&': 'p',
+  N: 'nav',
+  H: 'header',
+  F: 'footer',
+  M: 'main',
+  A: 'article',
+  Z: 'aside',
+  B: 'strong',
+  I: 'em',
+  '`': 'code',
+  P: 'pre',
+  G: 'figure',
+  f: 'figcaption',
+  D: 'details',
+  S: 'summary',
+  X: 'dialog',
+  Q: 'blockquote',
+  T: 'table',
+  E: 'thead',
+  Y: 'tbody',
+  R: 'tr',
+  C: 'td',
+  U: 'th',
+  V: 'select',
+  O: 'option',
+  J: 'script',
+  L: 'link',
+  m: 'meta',
+  w: 'dl',
+  x: 'dt',
+  y: 'dd',
 }
 
 const TAG_TO_ALIAS: Record<string, string> = {
@@ -110,6 +140,36 @@ const TAG_TO_ALIAS: Record<string, string> = {
   label: ':',
   textarea: ',',
   p: '&',
+  nav: 'N',
+  header: 'H',
+  footer: 'F',
+  main: 'M',
+  article: 'A',
+  aside: 'Z',
+  strong: 'B',
+  em: 'I',
+  code: '`',
+  pre: 'P',
+  figure: 'G',
+  figcaption: 'f',
+  details: 'D',
+  summary: 'S',
+  dialog: 'X',
+  blockquote: 'Q',
+  table: 'T',
+  thead: 'E',
+  tbody: 'Y',
+  tr: 'R',
+  td: 'C',
+  th: 'U',
+  select: 'V',
+  option: 'O',
+  script: 'J',
+  link: 'L',
+  meta: 'm',
+  dl: 'w',
+  dt: 'x',
+  dd: 'y',
 }
 
 const ATTR_ALIASES: Record<string, string> = {
@@ -124,6 +184,38 @@ const ATTR_ALIASES: Record<string, string> = {
   r: 'rel',
   c: 'class',
   i: 'id',
+  fl: 'for',
+  ac: 'action',
+  m: 'method',
+  l: 'loading',
+  st: 'style',
+  ro: 'role',
+  x: 'tabindex',
+  lg: 'lang',
+  ss: 'srcset',
+  sz: 'sizes',
+  me: 'media',
+  cs: 'colspan',
+  rs: 'rowspan',
+  w: 'width',
+  ht: 'height',
+  ml: 'maxlength',
+  nl: 'minlength',
+  mn: 'min',
+  mx: 'max',
+  sp: 'step',
+  pt: 'pattern',
+  au: 'autocomplete',
+  dl: 'download',
+  hl: 'hreflang',
+  co: 'crossorigin',
+  fp: 'fetchpriority',
+  ig: 'integrity',
+  ct: 'content',
+  ch: 'charset',
+  rw: 'rows',
+  cl: 'cols',
+  lb: 'label',
 }
 
 const ATTR_TO_ALIAS: Record<string, string> = {
@@ -138,6 +230,38 @@ const ATTR_TO_ALIAS: Record<string, string> = {
   rel: 'r',
   class: 'c',
   id: 'i',
+  for: 'fl',
+  action: 'ac',
+  method: 'm',
+  loading: 'l',
+  style: 'st',
+  role: 'ro',
+  tabindex: 'x',
+  lang: 'lg',
+  srcset: 'ss',
+  sizes: 'sz',
+  media: 'me',
+  colspan: 'cs',
+  rowspan: 'rs',
+  width: 'w',
+  height: 'ht',
+  maxlength: 'ml',
+  minlength: 'nl',
+  min: 'mn',
+  max: 'mx',
+  step: 'sp',
+  pattern: 'pt',
+  autocomplete: 'au',
+  download: 'dl',
+  hreflang: 'hl',
+  crossorigin: 'co',
+  fetchpriority: 'fp',
+  integrity: 'ig',
+  content: 'ct',
+  charset: 'ch',
+  rows: 'rw',
+  cols: 'cl',
+  label: 'lb',
 }
 
 const COMMON_INPUT_TYPES = new Set([
@@ -243,6 +367,20 @@ function isIdentifierChar(char: string): boolean {
   return /[a-zA-Z0-9:_-]/.test(char)
 }
 
+function shouldUseTagAliasToken(declaration: string, index = 0): boolean {
+  const aliasToken = declaration[index]
+  if (!/[a-zA-Z]/.test(aliasToken)) {
+    return true
+  }
+
+  const nextChar = declaration[index + 1]
+  if (!nextChar) {
+    return true
+  }
+
+  return nextChar === '.' || nextChar === '#' || nextChar === '[' || /\s/.test(nextChar)
+}
+
 function resolveAttributeName(name: string): string {
   if (ATTR_ALIASES[name]) {
     return ATTR_ALIASES[name]
@@ -258,9 +396,7 @@ function resolveAttributeName(name: string): string {
 function resolveAttributeNameForTag(name: string, tag: string): string {
   const lowerTag = tag.toLowerCase()
   if (lowerTag === 'img') {
-    if (name === 'w') {
-      return 'width'
-    }
+    // Backward compatibility for previous compact syntax where img[h] mapped to height.
     if (name === 'h') {
       return 'height'
     }
@@ -290,14 +426,7 @@ function resolveAttributeOutputNameForTag(
   tag: string,
   compact: boolean,
 ): string {
-  if (compact && tag.toLowerCase() === 'img') {
-    if (name === 'width') {
-      return 'w'
-    }
-    if (name === 'height') {
-      return 'h'
-    }
-  }
+  void tag
 
   return resolveAttributeOutputName(name, compact)
 }
@@ -685,7 +814,7 @@ function parseElementDeclaration(
   let tag = 'div'
 
   const firstChar = declaration[index]
-  if (ALIAS_TAGS[firstChar]) {
+  if (ALIAS_TAGS[firstChar] && shouldUseTagAliasToken(declaration, index)) {
     tag = ALIAS_TAGS[firstChar]
     index += 1
   } else if (isIdentifierChar(firstChar)) {
