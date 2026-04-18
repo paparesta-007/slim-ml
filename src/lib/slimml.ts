@@ -125,6 +125,15 @@ const ALIAS_TAGS: Record<string, string> = {
   y: 'dd',
 }
 
+const IMPLICIT_CHILD_TAG_BY_PARENT: Record<string, string> = {
+  ul: 'li',
+  ol: 'li',
+  select: 'option',
+  datalist: 'option',
+  tbody: 'tr',
+  tr: 'td',
+}
+
 const TAG_TO_ALIAS: Record<string, string> = {
   div: '~',
   span: '^',
@@ -171,6 +180,30 @@ const TAG_TO_ALIAS: Record<string, string> = {
   dt: 'x',
   dd: 'y',
 }
+
+const EXPLICIT_TAG_HINTS = new Set<string>([
+  ...Object.keys(TAG_TO_ALIAS),
+  'html',
+  'head',
+  'body',
+  'title',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'video',
+  'audio',
+  'canvas',
+  'svg',
+  'path',
+  'source',
+  'iframe',
+  'small',
+  'time',
+  'mark',
+])
 
 const ATTR_ALIASES: Record<string, string> = {
   h: 'href',
@@ -262,6 +295,94 @@ const ATTR_TO_ALIAS: Record<string, string> = {
   rows: 'rw',
   cols: 'cl',
   label: 'lb',
+}
+
+const VALUE_ALIAS_TO_VALUE_BY_ATTR: Record<string, Record<string, string>> = {
+  target: {
+    _b: '_blank',
+  },
+  loading: {
+    z: 'lazy',
+    e: 'eager',
+  },
+  method: {
+    p: 'post',
+    g: 'get',
+  },
+  decoding: {
+    a: 'async',
+  },
+  crossorigin: {
+    an: 'anonymous',
+  },
+  autocomplete: {
+    '0': 'off',
+    '1': 'on',
+  },
+  fetchpriority: {
+    hi: 'high',
+    lo: 'low',
+  },
+}
+
+const VALUE_ALIAS_TO_VALUE_BY_ATTR_AND_TAG: Record<
+  string,
+  Record<string, Record<string, string>>
+> = {
+  rel: {
+    link: {
+      s: 'stylesheet',
+      css: 'stylesheet',
+      ico: 'icon',
+    },
+    a: {
+      safe: 'noopener noreferrer',
+      no: 'noopener noreferrer',
+    },
+  },
+}
+
+const VALUE_TO_ALIAS_BY_ATTR: Record<string, Record<string, string>> = {
+  target: {
+    _blank: '_b',
+  },
+  loading: {
+    lazy: 'z',
+    eager: 'e',
+  },
+  method: {
+    post: 'p',
+    get: 'g',
+  },
+  decoding: {
+    async: 'a',
+  },
+  crossorigin: {
+    anonymous: 'an',
+  },
+  autocomplete: {
+    off: '0',
+    on: '1',
+  },
+  fetchpriority: {
+    high: 'hi',
+    low: 'lo',
+  },
+}
+
+const VALUE_TO_ALIAS_BY_ATTR_AND_TAG: Record<
+  string,
+  Record<string, Record<string, string>>
+> = {
+  rel: {
+    link: {
+      stylesheet: 's',
+      icon: 'ico',
+    },
+    a: {
+      'noopener noreferrer': 'no',
+    },
+  },
 }
 
 const COMMON_INPUT_TYPES = new Set([
@@ -381,6 +502,52 @@ function shouldUseTagAliasToken(declaration: string, index = 0): boolean {
   return nextChar === '.' || nextChar === '#' || nextChar === '[' || /\s/.test(nextChar)
 }
 
+function getImplicitChildTag(parent: SlimDocument | SlimElementNode): string | undefined {
+  if (parent.type !== 'element') {
+    return undefined
+  }
+
+  return IMPLICIT_CHILD_TAG_BY_PARENT[parent.tag.toLowerCase()]
+}
+
+function isExplicitDeclarationInImplicitContext(content: string): boolean {
+  const trimmed = content.trim()
+  if (!trimmed) {
+    return false
+  }
+
+  if (trimmed.startsWith('| ') || /^(#{1,6})\s+/.test(trimmed)) {
+    return true
+  }
+
+  const firstChar = trimmed[0]
+  if (
+    firstChar === '.' ||
+    firstChar === '#' ||
+    firstChar === '[' ||
+    (ALIAS_TAGS[firstChar] && shouldUseTagAliasToken(trimmed, 0))
+  ) {
+    return true
+  }
+
+  if (!isIdentifierChar(firstChar)) {
+    return false
+  }
+
+  let index = 0
+  while (index < trimmed.length && isIdentifierChar(trimmed[index])) {
+    index += 1
+  }
+
+  const token = trimmed.slice(0, index).toLowerCase()
+  const nextChar = trimmed[index]
+  if (nextChar === '.' || nextChar === '#' || nextChar === '[') {
+    return true
+  }
+
+  return EXPLICIT_TAG_HINTS.has(token)
+}
+
 function resolveAttributeName(name: string): string {
   if (ATTR_ALIASES[name]) {
     return ATTR_ALIASES[name]
@@ -431,6 +598,55 @@ function resolveAttributeOutputNameForTag(
   return resolveAttributeOutputName(name, compact)
 }
 
+function resolveAttributeValueAlias(
+  attributeName: string,
+  tag: string,
+  value: string,
+): string {
+  const normalizedAttr = attributeName.toLowerCase()
+  const normalizedTag = tag.toLowerCase()
+  const normalizedValue = value.toLowerCase()
+
+  const tagScopedAlias = VALUE_ALIAS_TO_VALUE_BY_ATTR_AND_TAG[normalizedAttr]?.[normalizedTag]
+  if (tagScopedAlias?.[normalizedValue]) {
+    return tagScopedAlias[normalizedValue]
+  }
+
+  const alias = VALUE_ALIAS_TO_VALUE_BY_ATTR[normalizedAttr]
+  if (alias?.[normalizedValue]) {
+    return alias[normalizedValue]
+  }
+
+  return value
+}
+
+function resolveAttributeValueOutputAlias(
+  attributeName: string,
+  tag: string,
+  value: string,
+  compact: boolean,
+): string {
+  if (!compact) {
+    return value
+  }
+
+  const normalizedAttr = attributeName.toLowerCase()
+  const normalizedTag = tag.toLowerCase()
+  const normalizedValue = value.toLowerCase()
+
+  const tagScopedAlias = VALUE_TO_ALIAS_BY_ATTR_AND_TAG[normalizedAttr]?.[normalizedTag]
+  if (tagScopedAlias?.[normalizedValue]) {
+    return tagScopedAlias[normalizedValue]
+  }
+
+  const alias = VALUE_TO_ALIAS_BY_ATTR[normalizedAttr]
+  if (alias?.[normalizedValue]) {
+    return alias[normalizedValue]
+  }
+
+  return value
+}
+
 function isSlimExpressionValue(value: string): boolean {
   const trimmed = value.trim()
 
@@ -443,8 +659,9 @@ function isSlimExpressionValue(value: string): boolean {
 function parseAttributeValue(
   name: string,
   rawValue: string,
+  tag: string,
 ): SlimAttributeValue {
-  const value = stripQuotes(rawValue)
+  const value = resolveAttributeValueAlias(name, tag, stripQuotes(rawValue))
 
   if (isSlimExpressionValue(value)) {
     return value
@@ -517,7 +734,7 @@ function tryApplyChildDefaultToken(
   }
 
   const rawValue = token.slice(eqIndex + 1).trim()
-  const value = parseAttributeValue(outputName, rawValue)
+  const value = parseAttributeValue(outputName, rawValue, childTag)
 
   if (outputName === 'class') {
     if (typeof value === 'string' && value.length > 0) {
@@ -540,6 +757,10 @@ function looksLikeCompactValue(token: string): boolean {
     /\.[a-z0-9]{2,8}(\?|$)/i.test(token) ||
     token.includes('?')
   )
+}
+
+function looksLikeMetaCharsetValue(token: string): boolean {
+  return /^(utf-?8|iso[-_][\w-]+|windows[-_][\w-]+|shift[_-]jis)$/i.test(token)
 }
 
 function splitDeclarationAndText(line: string): {
@@ -730,6 +951,15 @@ function applyAttributeToken(
     return
   }
 
+  if (
+    node.tag === 'meta' &&
+    node.attrs.charset === undefined &&
+    looksLikeMetaCharsetValue(compactValue)
+  ) {
+    node.attrs.charset = compactValue
+    return
+  }
+
   const eqIndex = token.indexOf('=')
 
   if (eqIndex === -1) {
@@ -770,7 +1000,7 @@ function applyAttributeToken(
   }
 
   const name = resolveAttributeNameForTag(rawName, node.tag)
-  const value = parseAttributeValue(name, rawValue)
+  const value = parseAttributeValue(name, rawValue, node.tag)
 
   if (name === 'class') {
     if (typeof value === 'string' && value) {
@@ -1044,6 +1274,13 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
       }
 
       const headingMatch = content.match(/^(#{1,6})\s+(.+)$/)
+      const parentNode = stack[stack.length - 1]
+      const implicitChildTag = getImplicitChildTag(parentNode)
+      const canUseImplicitChild =
+        implicitChildTag !== undefined &&
+        !content.startsWith('| ') &&
+        !headingMatch &&
+        !isExplicitDeclarationInImplicitContext(content)
 
       let node: SlimNode
       if (headingMatch) {
@@ -1060,6 +1297,16 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
         node = {
           type: 'text',
           value: content.slice(2),
+          line: lineNumber,
+        }
+      } else if (canUseImplicitChild && implicitChildTag) {
+        node = {
+          type: 'element',
+          tag: implicitChildTag,
+          classes: [],
+          attrs: {},
+          text: content,
+          children: [],
           line: lineNumber,
         }
       } else {
@@ -1489,6 +1736,51 @@ function emitElementDeclaration(
     delete attrs.type
   }
 
+  if (compact && lowerTag === 'script' && attrs.type === 'text/javascript') {
+    delete attrs.type
+  }
+
+  if (compact && lowerTag === 'style' && attrs.type === 'text/css') {
+    delete attrs.type
+  }
+
+  if (compact && lowerTag === 'form') {
+    if (typeof attrs.method === 'string' && attrs.method.toLowerCase() === 'get') {
+      delete attrs.method
+    }
+
+    if (attrs.enctype === 'application/x-www-form-urlencoded') {
+      delete attrs.enctype
+    }
+  }
+
+  if (
+    compact &&
+    lowerTag === 'link' &&
+    typeof attrs.rel === 'string' &&
+    attrs.rel.toLowerCase() === 'stylesheet' &&
+    attrs.type === 'text/css'
+  ) {
+    delete attrs.type
+  }
+
+  if (compact && lowerTag === 'ol' && attrs.type === '1') {
+    delete attrs.type
+  }
+
+  if (compact && (lowerTag === 'td' || lowerTag === 'th')) {
+    if (attrs.colspan === '1') {
+      delete attrs.colspan
+    }
+    if (attrs.rowspan === '1') {
+      delete attrs.rowspan
+    }
+  }
+
+  if (compact && lowerTag === 'img' && attrs.decoding === 'auto') {
+    delete attrs.decoding
+  }
+
   if (compact && typeof attrs.href === 'string' && lowerTag === 'a') {
     tokens.push(quoteSlimValue(attrs.href))
     delete attrs.href
@@ -1497,6 +1789,11 @@ function emitElementDeclaration(
   if (compact && typeof attrs.src === 'string' && lowerTag === 'img') {
     tokens.push(quoteSlimValue(attrs.src))
     delete attrs.src
+  }
+
+  if (compact && typeof attrs.charset === 'string' && lowerTag === 'meta') {
+    tokens.push(quoteSlimValue(attrs.charset))
+    delete attrs.charset
   }
 
   for (const [name, value] of Object.entries(attrs)) {
@@ -1509,7 +1806,8 @@ function emitElementDeclaration(
       continue
     }
 
-    tokens.push(`${outputName}=${quoteSlimValue(value)}`)
+    const outputValue = resolveAttributeValueOutputAlias(name, node.tag, value, compact)
+    tokens.push(`${outputName}=${quoteSlimValue(outputValue)}`)
   }
 
   const effectiveChildDefaults = childDefaults ?? node.childDefaults
@@ -1533,7 +1831,8 @@ function emitElementDeclaration(
           continue
         }
 
-        tokens.push(`${childToken}${outputName}=${quoteSlimValue(value)}`)
+        const outputValue = resolveAttributeValueOutputAlias(name, childTag, value, compact)
+        tokens.push(`${childToken}${outputName}=${quoteSlimValue(outputValue)}`)
       }
     }
   }
@@ -1562,6 +1861,23 @@ function emitNodeToSlim(
 
   if (node.type === 'text') {
     return [`${linePrefix}| ${node.value}`]
+  }
+
+  if (options.useCompactSyntax && parent) {
+    const implicitChildTag = IMPLICIT_CHILD_TAG_BY_PARENT[parent.tag.toLowerCase()]
+    const inlineText = flattenInlineText(node)
+    const canEmitImplicitChild =
+      implicitChildTag === node.tag.toLowerCase() &&
+      inlineText !== undefined &&
+      !isExplicitDeclarationInImplicitContext(inlineText) &&
+      !node.id &&
+      node.classes.length === 0 &&
+      Object.keys(node.attrs).length === 0 &&
+      !node.childDefaults
+
+    if (canEmitImplicitChild) {
+      return [`${linePrefix}${inlineText}`]
+    }
   }
 
   const synthesizedChildDefaults = options.synthesizeChildDefaults

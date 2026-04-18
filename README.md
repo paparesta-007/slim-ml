@@ -198,6 +198,25 @@ Mappa alias -> attributo:
 Vantaggio:
 - riduzione rumore su attributi frequenti.
 
+### 3.1) Alias Valori Contestuali
+
+Descrizione:
+- alcuni valori frequenti hanno alias brevi, riconosciuti solo nel contesto del relativo attributo (e, quando necessario, del tag), evitando ambiguità.
+
+Mappa alias valore -> valore reale:
+- `target`: `_b` -> `_blank`
+- `loading`: `z` -> `lazy`, `e` -> `eager`
+- `method`: `p` -> `post`, `g` -> `get`
+- `decoding`: `a` -> `async`
+- `crossorigin`: `an` -> `anonymous`
+- `autocomplete`: `0` -> `off`, `1` -> `on`
+- `fetchpriority`: `hi` -> `high`, `lo` -> `low`
+- `rel` su `link`: `s`/`css` -> `stylesheet`, `ico` -> `icon`
+- `rel` su `a`: `safe`/`no` -> `noopener noreferrer`
+
+Nota:
+- in modalità compatta, il serializer riemette automaticamente questi valori in forma alias quando applicabile.
+
 ### 4) Compressione Selettori Class e ID
 
 Descrizione:
@@ -274,6 +293,14 @@ Descrizione:
 - input senza type esplicito => type="text"
 - button fuori da un form senza type esplicito => type="button"
 - button dentro form senza type esplicito => type="submit"
+- script senza type esplicito => omette `t=text/javascript`
+- style senza type esplicito => omette `t=text/css`
+- form senza method esplicito => omette `m=get`
+- form senza enctype esplicito => omette `enctype=application/x-www-form-urlencoded`
+- link rel=stylesheet => omette `t=text/css`
+- ol senza type esplicito => omette `t=1`
+- td/th con colspan=1 o rowspan=1 => omette `cs=1` e `rs=1`
+- img con decoding=auto => omette `decoding=auto`
 
 Esempio:
 
@@ -285,7 +312,30 @@ Esempio:
 
 In modalità compatta, questi type di default vengono omessi in emissione SlimML.
 
-### 9) Ereditarieta Intelligente Su Figli
+### 9) Child Tag Impliciti (Container Deterministici)
+
+Descrizione:
+- in modalità compatta, alcuni parent consentono di omettere il tag figlio quando il contenuto è testo inline puro
+
+Regole:
+- `ul` / `ol` -> figlio implicito `li`
+- `select` / `datalist` -> figlio implicito `option`
+- `tbody` -> figlio implicito `tr`
+- `tr` -> figlio implicito `td`
+
+Esempio:
+
+```txt
++.menu
+  Home
+  About
+  Contact
+```
+
+Round-trip:
+- il parser espande in modo deterministico ai tag reali, mantenendo round-trip lossless.
+
+### 10) Ereditarieta Intelligente Su Figli
 
 Descrizione:
 - il parent può definire attributi default per i figli diretti di un certo tag
@@ -311,7 +361,7 @@ Regole importanti:
 - gli attributi del figlio espliciti vincono su quelli ereditati
 - id ereditato si applica solo se il figlio non ha id esplicito
 
-### 10) Flattening Testo Inline In Emissione
+### 11) Flattening Testo Inline In Emissione
 
 Descrizione:
 - se un elemento ha un unico figlio text node, compileToSlim lo compatta in testo inline
@@ -329,14 +379,14 @@ A:
 & Ciao
 ```
 
-### 11) Compressione Lossless Automatica End-To-End
+### 12) Compressione Lossless Automatica End-To-End
 
 Descrizione:
 - compressSlimLossless(source) esegue parse + compileToSlim(compressionMode: 'aggressive')
 - applica in cascata tutte le forme di compressione lossless disponibili
 - in modalità aggressive, il serializer può sintetizzare childDefaults per classi ripetute sui figli diretti e rimuovere i duplicati dai figli
 
-### 12) Modi Di Compressione Selezionabili
+### 13) Modi Di Compressione Selezionabili
 
 Sono disponibili 4 modalità, selezionabili con `compressionMode`:
 - `none`: serializzazione leggibile, senza alias compatti
@@ -471,7 +521,10 @@ Compressioni da preferire (lossless):
 6) Ometti type sui button fuori dai form se e button.
 7) Ometti type sui button dentro form se e submit.
 8) Usa ereditarieta per attributi ripetuti sui figli diretti, es: +.menu [*c=item] o .btn-group[$c=btn $c=btn-outline-secondary].
-9) Se disponibile, usa compressionMode=minified per massima riduzione token lossless.
+9) Ometti default contestuali HTML5 (script/style/form/link/ol/td/th/img) quando i valori sono impliciti.
+10) Nei container deterministici (ul/ol/select/datalist/tbody/tr), ometti il tag figlio se il contenuto è solo testo inline.
+11) Se disponibile, usa compressionMode=minified per massima riduzione token lossless.
+12) Per valori frequenti usa alias contestuali (`target=_b`, `loading=z`, `method=p`, `rel=safe`) quando semanticamente equivalenti.
 
 Semantica implicita da rispettare:
 - input senza type => type=text
