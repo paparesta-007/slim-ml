@@ -99,10 +99,69 @@
   gap: 0.7rem;
 }
 
+.toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+}
+
 .toolbar-buttons {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
+}
+
+.compression-mode-control {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.preview-cdn-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.preview-cdn-control > span {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.check-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 0.28rem 0.58rem;
+  background: rgba(255, 255, 255, 0.85);
+  font: 600 0.78rem/1 var(--sans);
+}
+
+.check-chip input {
+  margin: 0;
+}
+
+.compression-mode-control label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.mode-select {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  padding: 0.44rem 0.56rem;
+  font: 600 0.82rem/1 var(--sans);
+}
+
+.mode-select:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
 }
 
 .action-btn {
@@ -151,11 +210,32 @@
 
 .editor,
 .code-block,
-.dom-preview-surface,
+.dom-preview-frame,
 .dom-empty {
   min-height: 270px;
   border-radius: 12px;
   border: 1px solid var(--line-soft);
+}
+
+.editor-stack {
+  position: relative;
+  min-height: 270px;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  background: var(--code-bg);
+}
+
+.editor-highlight {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  overflow: hidden;
+  padding: 0.86rem;
+  box-sizing: border-box;
+  color: #1a2340;
+  font: 500 0.9rem/1.5 var(--mono);
+  white-space: pre;
+  pointer-events: none;
 }
 
 .editor {
@@ -166,6 +246,29 @@
   background: var(--code-bg);
   color: var(--ink);
   font: 500 0.9rem/1.5 var(--mono);
+}
+
+.editor-overlay {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  border-radius: 12px;
+  min-height: 270px;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--ink);
+  -webkit-text-fill-color: transparent;
+}
+
+.editor-overlay::selection,
+.editor-overlay::-moz-selection {
+  background: rgba(80, 127, 255, 0.25);
+  color: transparent;
+}
+
+.editor-overlay:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .editor:focus-visible {
@@ -183,11 +286,51 @@
   white-space: pre-wrap;
 }
 
-.dom-preview-surface {
-  padding: 0.86rem;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(46, 110, 255, 0.12), transparent 30%),
-    linear-gradient(180deg, #fffef8 0%, #f6f7ff 100%);
+.sl-token-tag {
+  color: #1b4cc4;
+  font-weight: 700;
+}
+
+.sl-token-class {
+  color: #8a2f99;
+}
+
+.sl-token-id {
+  color: #7d3d02;
+}
+
+.sl-token-bracket {
+  color: #4a5f82;
+}
+
+.sl-token-attr {
+  color: #005a72;
+}
+
+.sl-token-value {
+  color: #9d2b2b;
+}
+
+.sl-token-text,
+.sl-token-heading-text {
+  color: #1d2a42;
+}
+
+.sl-token-comment {
+  color: #5e7a8a;
+  font-style: italic;
+}
+
+.sl-token-pipe,
+.sl-token-heading-mark {
+  color: #3b4f73;
+  font-weight: 700;
+}
+
+.dom-preview-frame {
+  width: 100%;
+  padding: 0;
+  background: #fff;
   overflow: auto;
 }
 
@@ -262,58 +405,6 @@
   border: 0;
 }
 
-.dom-preview-surface .page {
-  border: 1px solid #d7ddf2;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.78);
-  padding: 0.8rem;
-}
-
-.dom-preview-surface .lead {
-  color: #324464;
-}
-
-.dom-preview-surface .actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 0.7rem 0;
-}
-
-.dom-preview-surface .btn {
-  display: inline-flex;
-  text-decoration: none;
-  border-radius: 999px;
-  padding: 0.38rem 0.7rem;
-  font-weight: 700;
-  border: 1px solid rgba(18, 35, 77, 0.2);
-  color: #142540;
-  background: #f9fbff;
-}
-
-.dom-preview-surface .btn-ghost {
-  background: #eef3ff;
-}
-
-.dom-preview-surface .cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
-}
-
-.dom-preview-surface .card {
-  border-radius: 10px;
-  border: 1px solid rgba(47, 87, 178, 0.16);
-  padding: 0.6rem;
-}
-
-.dom-preview-surface img {
-  margin-top: 0.8rem;
-  max-width: 100%;
-  height: auto;
-  border-radius: 10px;
-}
-
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -335,6 +426,10 @@
 
   .panel-head {
     flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .toolbar-controls {
     align-items: flex-start;
   }
 }

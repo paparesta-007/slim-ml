@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  SLIM_COMPRESSION_MODES,
   compareTokenUsage,
-  compileToDom,
   compileToHtml,
   compressSlimLossless,
   convertHtmlToSlim,
   formatParseError,
   parseHtmlToAst,
   parseSlimML,
+  type SlimCompressionMode,
   type SlimDocument,
 } from './lib/slimml'
 import './App.css'
@@ -62,36 +63,327 @@ const STARTER_HTML = `<div id="home" class="page" data-theme="light">
   <img src="https://images.unsplash.com/photo-1557683316-973673baf926?w=800" alt="Abstract color waves">
 </div>`
 
-interface DomPreviewProps {
-  ast: SlimDocument | null
+const COMPRESSION_MODE_LABELS: Record<SlimCompressionMode, string> = {
+  none: 'None',
+  compact: 'Compact',
+  aggressive: 'Aggressive',
 }
 
-function DomPreview({ ast }: DomPreviewProps) {
-  const previewRef = useRef<HTMLDivElement>(null)
+interface DomPreviewProps {
+  ast: SlimDocument | null
+  useBootstrap: boolean
+  useTailwind: boolean
+}
 
-  useEffect(() => {
-    const host = previewRef.current
-    if (!host) {
-      return
+const SLIM_ALIAS_TAGS = new Set(['~', '^', '@', '$', '!', '|', '%', '+', '*', '=', '?', ':', ',', '&'])
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+}
+
+function splitDeclarationAndTextForHighlight(line: string): { declaration: string; text?: string } {
+  let bracketDepth = 0
+  let quote: '"' | "'" | null = null
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+
+    if (quote) {
+      if (char === quote && line[i - 1] !== '\\') {
+        quote = null
+      }
+      continue
     }
 
-    host.replaceChildren()
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
 
+    if (char === '[') {
+      bracketDepth += 1
+      continue
+    }
+
+    if (char === ']') {
+      bracketDepth -= 1
+      continue
+    }
+
+    if (char === ' ' && bracketDepth === 0) {
+      const declaration = line.slice(0, i)
+      const text = line.slice(i + 1)
+      return {
+        declaration,
+        text: text.length > 0 ? text : undefined,
+      }
+    }
+  }
+
+  return { declaration: line }
+}
+
+function tokenizeAttributeBlock(content: string): string[] {
+  const tokens: string[] = []
+  let token = ''
+  let quote: '"' | "'" | null = null
+
+  for (let i = 0; i < content.length; i += 1) {
+    const char = content[i]
+
+    if (quote) {
+      token += char
+      if (char === quote && content[i - 1] !== '\\') {
+        quote = null
+      }
+      continue
+    }
+
+    if (char === '"' || char === "'") {
+      token += char
+      quote = char
+      continue
+    }
+
+    if (/\s/.test(char)) {
+      if (token.length > 0) {
+        tokens.push(token)
+        token = ''
+      }
+      continue
+    }
+
+    token += char
+  }
+
+  if (token.length > 0) {
+    tokens.push(token)
+  }
+
+  return tokens
+}
+
+function highlightAttributeToken(token: string): string {
+  const eqIndex = token.indexOf('=')
+  if (eqIndex === -1) {
+    return `<span class="sl-token-attr">${escapeHtml(token)}</span>`
+  }
+
+  const key = token.slice(0, eqIndex)
+  const rawValue = token.slice(eqIndex + 1)
+  const value =
+    (rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+    (rawValue.startsWith("'") && rawValue.endsWith("'"))
+      ? rawValue.slice(1, -1)
+      : rawValue
+
+  return `<span class="sl-token-attr">${escapeHtml(key)}</span>=<span class="sl-token-value">${escapeHtml(
+    value,
+  )}</span>`
+}
+
+function highlightAttributeBlock(content: string): string {
+  const tokens = tokenizeAttributeBlock(content)
+  if (tokens.length === 0) {
+    return '<span class="sl-token-bracket">[]</span>'
+  }
+
+  const renderedTokens = tokens.map(highlightAttributeToken).join(' ')
+  return `<span class="sl-token-bracket">[</span>${renderedTokens}<span class="sl-token-bracket">]</span>`
+}
+
+function highlightDeclaration(declaration: string): string {
+  if (!declaration) {
+    return ''
+  }
+
+  let index = 0
+  let output = ''
+
+  const firstChar = declaration[index]
+  if (SLIM_ALIAS_TAGS.has(firstChar)) {
+    output += `<span class="sl-token-tag">${escapeHtml(firstChar)}</span>`
+    index += 1
+  } else if (/[a-zA-Z]/.test(firstChar)) {
+    const start = index
+    while (index < declaration.length && /[a-zA-Z0-9:_-]/.test(declaration[index])) {
+      index += 1
+    }
+    output += `<span class="sl-token-tag">${escapeHtml(declaration.slice(start, index))}</span>`
+  }
+
+  while (index < declaration.length) {
+    const char = declaration[index]
+
+    if (char === '.') {
+      const start = index
+      index += 1
+      while (index < declaration.length && /[a-zA-Z0-9:_-]/.test(declaration[index])) {
+        index += 1
+      }
+      output += `<span class="sl-token-class">${escapeHtml(declaration.slice(start, index))}</span>`
+      continue
+    }
+
+    if (char === '#') {
+      const start = index
+      index += 1
+      while (index < declaration.length && /[a-zA-Z0-9:_-]/.test(declaration[index])) {
+        index += 1
+      }
+      output += `<span class="sl-token-id">${escapeHtml(declaration.slice(start, index))}</span>`
+      continue
+    }
+
+    if (char === '[') {
+      let end = index + 1
+      let quote: '"' | "'" | null = null
+
+      while (end < declaration.length) {
+        const c = declaration[end]
+        if (quote) {
+          if (c === quote && declaration[end - 1] !== '\\') {
+            quote = null
+          }
+          end += 1
+          continue
+        }
+
+        if (c === '"' || c === "'") {
+          quote = c
+          end += 1
+          continue
+        }
+
+        if (c === ']') {
+          break
+        }
+        end += 1
+      }
+
+      if (declaration[end] === ']') {
+        output += highlightAttributeBlock(declaration.slice(index + 1, end))
+        index = end + 1
+      } else {
+        output += `<span class="sl-token-bracket">${escapeHtml(declaration.slice(index))}</span>`
+        break
+      }
+      continue
+    }
+
+    output += escapeHtml(char)
+    index += 1
+  }
+
+  return output
+}
+
+function highlightSlimML(source: string): string {
+  return source
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => {
+      const indentation = line.match(/^[\t ]*/)?.[0] ?? ''
+      const content = line.slice(indentation.length)
+      const indentPart = escapeHtml(indentation)
+
+      if (!content) {
+        return indentPart
+      }
+
+      if (content.startsWith('//')) {
+        return `${indentPart}<span class="sl-token-comment">${escapeHtml(content)}</span>`
+      }
+
+      const headingMatch = content.match(/^(#{1,6})\s+(.+)$/)
+      if (headingMatch) {
+        return `${indentPart}<span class="sl-token-heading-mark">${escapeHtml(
+          headingMatch[1],
+        )}</span> <span class="sl-token-heading-text">${escapeHtml(headingMatch[2])}</span>`
+      }
+
+      if (content.startsWith('| ')) {
+        return `${indentPart}<span class="sl-token-pipe">|</span> <span class="sl-token-text">${escapeHtml(
+          content.slice(2),
+        )}</span>`
+      }
+
+      const { declaration, text } = splitDeclarationAndTextForHighlight(content)
+      const declarationPart = highlightDeclaration(declaration)
+
+      if (text === undefined) {
+        return `${indentPart}${declarationPart}`
+      }
+
+      return `${indentPart}${declarationPart} <span class="sl-token-text">${escapeHtml(text)}</span>`
+    })
+    .join('\n')
+}
+
+function buildPreviewDocument(
+  ast: SlimDocument,
+  useBootstrap: boolean,
+  useTailwind: boolean,
+): string {
+  const frameworkTags = [
+    useBootstrap
+      ? '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css">'
+      : '',
+    useTailwind ? '<script src="https://cdn.tailwindcss.com"></script>' : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    ${frameworkTags}
+    <style>
+      body {
+        margin: 0;
+        padding: 1rem;
+        font: 500 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: linear-gradient(180deg, #fffef8 0%, #f4f7ff 100%);
+        color: #11203d;
+      }
+
+      #preview-root {
+        min-height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="preview-root">${compileToHtml(ast)}</div>
+  </body>
+</html>`
+}
+
+function DomPreview({ ast, useBootstrap, useTailwind }: DomPreviewProps) {
+  const srcDoc = useMemo(() => {
     if (!ast) {
-      return
+      return ''
     }
+    return buildPreviewDocument(ast, useBootstrap, useTailwind)
+  }, [ast, useBootstrap, useTailwind])
 
-    host.append(compileToDom(ast, document))
-  }, [ast])
-
-  return <div className="dom-preview-surface" ref={previewRef} />
+  return (
+    <iframe
+      title="DOM Preview"
+      className="dom-preview-frame"
+      sandbox="allow-same-origin allow-scripts"
+      srcDoc={srcDoc}
+    />
+  )
 }
 
 function normalizeEscapedNewlines(source: string): string {
   if (source.includes('\\n') || source.includes('\\r\\n')) {
-    return source
-      .replaceAll('\\r\\n', '\n')
-      .replaceAll('\\n', '\n')
+    return source.replaceAll('\\r\\n', '\n').replaceAll('\\n', '\n')
   }
 
   return source
@@ -100,8 +392,13 @@ function normalizeEscapedNewlines(source: string): string {
 function App() {
   const [slimSource, setSlimSource] = useState(STARTER_SLIM)
   const [htmlSource, setHtmlSource] = useState(STARTER_HTML)
+  const [compressionMode, setCompressionMode] = useState<SlimCompressionMode>('aggressive')
+  const [useBootstrapPreview, setUseBootstrapPreview] = useState(false)
+  const [useTailwindPreview, setUseTailwindPreview] = useState(false)
   const [actionMessage, setActionMessage] = useState('Ready.')
   const [lastEdited, setLastEdited] = useState<'slim' | 'html' | null>(null)
+  const slimEditorRef = useRef<HTMLTextAreaElement>(null)
+  const slimHighlightRef = useRef<HTMLPreElement>(null)
 
   const slimParse = useMemo(() => parseSlimML(slimSource), [slimSource])
   const htmlParse = useMemo(() => parseHtmlToAst(htmlSource), [htmlSource])
@@ -117,17 +414,35 @@ function App() {
   )
 
   const compressedSlim = useMemo(() => {
-    const result = compressSlimLossless(slimSource)
+    const result = compressSlimLossless(slimSource, { compressionMode })
     if (!result.ok) {
       return ''
     }
     return result.slim
-  }, [slimSource])
+  }, [compressionMode, slimSource])
 
   const compactStats = useMemo(
     () => compareTokenUsage(compressedSlim, slimSource.trimEnd()),
     [compressedSlim, slimSource],
   )
+
+  const highlightedSlimSource = useMemo(() => `${highlightSlimML(slimSource)}\n`, [slimSource])
+
+  const syncSlimHighlightScroll = (target: HTMLTextAreaElement) => {
+    if (!slimHighlightRef.current) {
+      return
+    }
+
+    slimHighlightRef.current.scrollTop = target.scrollTop
+    slimHighlightRef.current.scrollLeft = target.scrollLeft
+  }
+
+  useEffect(() => {
+    if (!slimEditorRef.current) {
+      return
+    }
+    syncSlimHighlightScroll(slimEditorRef.current)
+  }, [slimSource])
 
   useEffect(() => {
     if (lastEdited !== 'slim') {
@@ -152,7 +467,7 @@ function App() {
     }
 
     const timer = window.setTimeout(() => {
-      const converted = convertHtmlToSlim(htmlSource, { compact: true })
+      const converted = convertHtmlToSlim(htmlSource, { compressionMode })
       if (!converted.ok) {
         return
       }
@@ -160,7 +475,7 @@ function App() {
     }, 220)
 
     return () => window.clearTimeout(timer)
-  }, [htmlSource, lastEdited])
+  }, [compressionMode, htmlSource, lastEdited])
 
   const handleSlimToHtml = () => {
     const parsed = parseSlimML(slimSource)
@@ -175,7 +490,7 @@ function App() {
   }
 
   const handleHtmlToSlim = () => {
-    const converted = convertHtmlToSlim(htmlSource, { compact: true })
+    const converted = convertHtmlToSlim(htmlSource, { compressionMode })
     if (!converted.ok) {
       setActionMessage(`HTML parse failed: ${converted.error}`)
       return
@@ -183,11 +498,11 @@ function App() {
 
     setSlimSource(converted.slim)
     setLastEdited('html')
-    setActionMessage('Converted HTML to compact SlimML.')
+    setActionMessage(`Converted HTML to ${COMPRESSION_MODE_LABELS[compressionMode]} SlimML.`)
   }
 
   const handleCompressSlim = () => {
-    const compressed = compressSlimLossless(slimSource)
+    const compressed = compressSlimLossless(slimSource, { compressionMode })
     if (!compressed.ok) {
       setActionMessage(`Slim compression failed: ${formatParseError(compressed.error)}`)
       return
@@ -195,7 +510,9 @@ function App() {
 
     setSlimSource(compressed.slim)
     setLastEdited('slim')
-    setActionMessage('Applied lossless compact compression to SlimML.')
+    setActionMessage(
+      `Applied lossless ${COMPRESSION_MODE_LABELS[compressionMode].toLowerCase()} compression to SlimML.`,
+    )
   }
 
   return (
@@ -205,7 +522,7 @@ function App() {
         <h1>SlimML Bidirectional Playground</h1>
         <p className="subtitle">
           Edit both sources freely. Convert in either direction and apply
-          lossless compact compression with aliases, defaults, and inheritance.
+          lossless compression in selectable modes.
         </p>
 
         <div className="stats-grid" role="list" aria-label="Compression metrics">
@@ -225,7 +542,7 @@ function App() {
             <span>estimated token savings</span>
           </article>
           <article role="listitem" className="stat-card">
-            <h2>Compact Slim</h2>
+            <h2>Compressed Slim</h2>
             <p>{compactStats.slimTokens}</p>
             <span>
               saves {Math.max(compactStats.tokenSavingsPct, 0).toFixed(1)}% vs current Slim
@@ -235,16 +552,76 @@ function App() {
       </header>
 
       <section className="toolbar panel" aria-label="Conversion controls">
-        <div className="toolbar-buttons">
-          <button type="button" className="action-btn" onClick={handleSlimToHtml}>
-            Slim -&gt; HTML
-          </button>
-          <button type="button" className="action-btn" onClick={handleHtmlToSlim}>
-            HTML -&gt; Slim
-          </button>
-          <button type="button" className="action-btn action-btn-accent" onClick={handleCompressSlim}>
-            Compress Slim (lossless)
-          </button>
+        <div className="toolbar-controls">
+          <div className="toolbar-buttons">
+            <button type="button" className="action-btn" onClick={handleSlimToHtml}>
+              Slim -&gt; HTML
+            </button>
+            <button type="button" className="action-btn" onClick={handleHtmlToSlim}>
+              HTML -&gt; Slim
+            </button>
+            <button
+              type="button"
+              className="action-btn action-btn-accent"
+              onClick={handleCompressSlim}
+            >
+              Compress Slim (lossless)
+            </button>
+          </div>
+          <div className="compression-mode-control">
+            <label htmlFor="compression-mode">Compression mode</label>
+            <select
+              id="compression-mode"
+              className="mode-select"
+              value={compressionMode}
+              onChange={(event) => {
+                const nextMode = event.target.value as SlimCompressionMode
+                setCompressionMode(nextMode)
+                setActionMessage(`Compression mode set to ${COMPRESSION_MODE_LABELS[nextMode]}.`)
+              }}
+            >
+              {SLIM_COMPRESSION_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {COMPRESSION_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="preview-cdn-control" role="group" aria-label="DOM preview frameworks">
+            <span>DOM CDN</span>
+            <label className="check-chip" htmlFor="preview-bootstrap">
+              <input
+                id="preview-bootstrap"
+                type="checkbox"
+                checked={useBootstrapPreview}
+                onChange={(event) => {
+                  setUseBootstrapPreview(event.target.checked)
+                  setActionMessage(
+                    event.target.checked
+                      ? 'Bootstrap CDN enabled in DOM preview.'
+                      : 'Bootstrap CDN disabled in DOM preview.',
+                  )
+                }}
+              />
+              Bootstrap
+            </label>
+            <label className="check-chip" htmlFor="preview-tailwind">
+              <input
+                id="preview-tailwind"
+                type="checkbox"
+                checked={useTailwindPreview}
+                onChange={(event) => {
+                  setUseTailwindPreview(event.target.checked)
+                  setActionMessage(
+                    event.target.checked
+                      ? 'Tailwind CDN enabled in DOM preview.'
+                      : 'Tailwind CDN disabled in DOM preview.',
+                  )
+                }}
+              />
+              Tailwind
+            </label>
+          </div>
         </div>
         <p className="status status-ok" aria-live="polite">
           {actionMessage}
@@ -260,20 +637,27 @@ function App() {
           <label htmlFor="slimml-editor" className="sr-only">
             SlimML source editor
           </label>
-          <textarea
-            id="slimml-editor"
-            className="editor"
-            spellCheck={false}
-            value={slimSource}
-            onChange={(event) => {
-              setSlimSource(normalizeEscapedNewlines(event.target.value))
-              setLastEdited('slim')
-            }}
-          />
-          <p
-            className={slimError ? 'status status-error' : 'status status-ok'}
-            aria-live="polite"
-          >
+          <div className="editor-stack">
+            <pre
+              ref={slimHighlightRef}
+              className="editor-highlight"
+              aria-hidden="true"
+              dangerouslySetInnerHTML={{ __html: highlightedSlimSource }}
+            />
+            <textarea
+              id="slimml-editor"
+              ref={slimEditorRef}
+              className="editor editor-overlay"
+              spellCheck={false}
+              value={slimSource}
+              onScroll={(event) => syncSlimHighlightScroll(event.currentTarget)}
+              onChange={(event) => {
+                setSlimSource(normalizeEscapedNewlines(event.target.value))
+                setLastEdited('slim')
+              }}
+            />
+          </div>
+          <p className={slimError ? 'status status-error' : 'status status-ok'} aria-live="polite">
             {slimError ?? 'Slim parser status: valid.'}
           </p>
         </section>
@@ -296,10 +680,7 @@ function App() {
               setLastEdited('html')
             }}
           />
-          <p
-            className={htmlError ? 'status status-error' : 'status status-ok'}
-            aria-live="polite"
-          >
+          <p className={htmlError ? 'status status-error' : 'status status-ok'} aria-live="polite">
             {htmlError ?? 'HTML parser status: valid.'}
           </p>
         </section>
@@ -307,7 +688,7 @@ function App() {
         <section className="panel">
           <div className="panel-head">
             <h2>Compact Slim Preview</h2>
-            <p>Lossless compressed output</p>
+            <p>{COMPRESSION_MODE_LABELS[compressionMode]} mode output</p>
           </div>
           <pre className="code-block">{compressedSlim || 'Fix Slim parser errors to compress.'}</pre>
         </section>
@@ -318,7 +699,11 @@ function App() {
             <p>Uses whichever source currently parses</p>
           </div>
           {previewAst ? (
-            <DomPreview ast={previewAst} />
+            <DomPreview
+              ast={previewAst}
+              useBootstrap={useBootstrapPreview}
+              useTailwind={useTailwindPreview}
+            />
           ) : (
             <div className="dom-empty">Preview unavailable until one source is valid.</div>
           )}
@@ -341,11 +726,17 @@ function App() {
           </article>
           <article>
             <h3>Implicit Defaults</h3>
-            <p>| means input type=text, button outside a form defaults to type=button, and button in form defaults to submit</p>
+            <p>
+              | means input type=text, button outside a form defaults to type=button,
+              and button in form defaults to submit
+            </p>
           </article>
           <article>
             <h3>Child Inheritance</h3>
-            <p>Use $c=... on the parent, for example $c=btn $c=btn-outline-secondary, to inherit repeated button classes once</p>
+            <p>
+              Use $c=... on the parent, for example $c=btn $c=btn-outline-secondary,
+              to inherit repeated button classes once
+            </p>
           </article>
           <article>
             <h3>Positional Attr</h3>
@@ -361,7 +752,7 @@ function App() {
           </article>
           <article>
             <h3>Formatting</h3>
-            <p>Keep 2-space nesting to retain parser reliability</p>
+            <p>Aggressive mode emits tab indentation; other modes keep two-space nesting</p>
           </article>
         </div>
       </section>

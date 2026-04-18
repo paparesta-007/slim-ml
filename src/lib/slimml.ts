@@ -62,9 +62,19 @@ export interface HtmlParseFailure {
 
 export type HtmlParseResult = HtmlParseSuccess | HtmlParseFailure
 
+export const SLIM_COMPRESSION_MODES = ['none', 'compact', 'aggressive'] as const
+export type SlimCompressionMode = (typeof SLIM_COMPRESSION_MODES)[number]
+
 export interface SlimCompileOptions {
   indent?: string
   compact?: boolean
+  compressionMode?: SlimCompressionMode
+}
+
+interface ResolvedSlimCompileOptions {
+  indent: string
+  useCompactSyntax: boolean
+  synthesizeChildDefaults: boolean
 }
 
 const ALIAS_TAGS: Record<string, string> = {
@@ -672,6 +682,7 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
     }
 
     const stack: Array<SlimDocument | SlimElementNode> = [ast]
+    let indentStyle: 'space' | 'tab' | null = null
     const lines = source.replace(/\r\n?/g, '\n').split('\n')
 
     for (let index = 0; index < lines.length; index += 1) {
@@ -682,24 +693,54 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
         continue
       }
 
-      if (rawLine.includes('\t')) {
+      const indentation = rawLine.match(/^[ \t]*/)?.[0] ?? ''
+      const hasTabs = indentation.includes('\t')
+      const hasSpaces = indentation.includes(' ')
+
+      if (hasTabs && hasSpaces) {
         throw new ParserIssue(
-          'Tabs are not allowed. Use spaces for indentation.',
+          'Mixed tabs and spaces in indentation are not allowed.',
           lineNumber,
           1,
         )
       }
 
-      const leadingSpaces = rawLine.match(/^ */)?.[0].length ?? 0
-      if (leadingSpaces % indentSize !== 0) {
+      if (!indentStyle && indentation.length > 0) {
+        indentStyle = hasTabs ? 'tab' : 'space'
+      }
+
+      if (indentStyle === 'space' && hasTabs) {
         throw new ParserIssue(
-          `Indentation must be a multiple of ${indentSize} spaces.`,
+          'Indentation style mismatch: expected spaces.',
           lineNumber,
           1,
         )
       }
 
-      const depth = leadingSpaces / indentSize
+      if (indentStyle === 'tab' && hasSpaces) {
+        throw new ParserIssue(
+          'Indentation style mismatch: expected tabs.',
+          lineNumber,
+          1,
+        )
+      }
+
+      let depth = 0
+      if (indentStyle === 'tab') {
+        depth = indentation.length
+      } else {
+        const leadingSpaces = indentation.length
+        if (leadingSpaces % indentSize !== 0) {
+          throw new ParserIssue(
+            `Indentation must be a multiple of ${indentSize} spaces.`,
+            lineNumber,
+            1,
+          )
+        }
+
+        depth = leadingSpaces / indentSize
+      }
+
       if (depth > stack.length - 1) {
         throw new ParserIssue(
           'Indentation jump detected. Nest by one level at a time.',
@@ -712,7 +753,7 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
         stack.pop()
       }
 
-      const content = rawLine.slice(leadingSpaces)
+      const content = rawLine.slice(indentation.length)
       if (content.startsWith('//')) {
         continue
       }
@@ -1216,7 +1257,7 @@ function emitElementDeclaration(
 function emitNodeToSlim(
   node: SlimNode,
   depth: number,
-  options: Required<SlimCompileOptions>,
+  options: ResolvedSlimCompileOptions,
   parent?: SlimElementNode,
   parentChildDefaults?: Record<string, SlimChildDefaultRule>,
 ): string[] {
@@ -1226,17 +1267,17 @@ function emitNodeToSlim(
     return [`${indent}| ${node.value}`]
   }
 
-  const synthesizedChildDefaults = options.compact
+  const synthesizedChildDefaults = options.synthesizeChildDefaults
     ? collectCompactChildDefaults(node)
     : undefined
-  const effectiveChildDefaults = options.compact
+  const effectiveChildDefaults = options.useCompactSyntax
     ? mergeChildDefaultMaps(node.childDefaults, synthesizedChildDefaults)
     : node.childDefaults
   const inlineText = flattenInlineText(node)
   const declaration = emitElementDeclaration(
     node,
     parent,
-    options.compact,
+    options.useCompactSyntax,
     effectiveChildDefaults,
     parentChildDefaults,
   )
@@ -1261,14 +1302,29 @@ function emitNodeToSlim(
   return lines
 }
 
+function resolveCompressionMode(options: SlimCompileOptions): SlimCompressionMode {
+  if (options.compressionMode) {
+    return options.compressionMode
+  }
+
+  return options.compact ? 'aggressive' : 'none'
+}
+
+function resolveSlimCompileOptions(options: SlimCompileOptions): ResolvedSlimCompileOptions {
+  const compressionMode = resolveCompressionMode(options)
+
+  return {
+    indent: options.indent ?? (compressionMode === 'aggressive' ? '\t' : '  '),
+    useCompactSyntax: compressionMode !== 'none',
+    synthesizeChildDefaults: compressionMode === 'aggressive',
+  }
+}
+
 export function compileToSlim(
   ast: SlimDocument,
   options: SlimCompileOptions = {},
 ): string {
-  const merged: Required<SlimCompileOptions> = {
-    compact: options.compact ?? false,
-    indent: options.indent ?? '  ',
-  }
+  const merged = resolveSlimCompileOptions(options)
 
   return ast.children
     .flatMap((node) => emitNodeToSlim(node, 0, merged))
@@ -1437,7 +1493,7 @@ export function parseHtmlToAst(html: string): HtmlParseResult {
 
 export function convertHtmlToSlim(
   html: string,
-  options: SlimCompileOptions = { compact: true },
+  options: SlimCompileOptions = { compressionMode: 'aggressive' },
 ):
   | { ok: true; slim: string; ast: SlimDocument; warnings: string[] }
   | { ok: false; error: string } {
@@ -1456,6 +1512,7 @@ export function convertHtmlToSlim(
 
 export function compressSlimLossless(
   source: string,
+  options: SlimCompileOptions = {},
 ):
   | { ok: true; slim: string; ast: SlimDocument; warnings: string[] }
   | { ok: false; error: SlimParseError } {
@@ -1464,9 +1521,17 @@ export function compressSlimLossless(
     return parsed
   }
 
+  const compileOptions: SlimCompileOptions =
+    options.compressionMode || options.compact !== undefined
+      ? options
+      : {
+          ...options,
+          compressionMode: 'aggressive',
+        }
+
   return {
     ok: true,
-    slim: compileToSlim(parsed.ast, { compact: true }),
+    slim: compileToSlim(parsed.ast, compileOptions),
     ast: parsed.ast,
     warnings: parsed.warnings,
   }

@@ -70,8 +70,9 @@ tag.class#id[attr=value attr2=value2] testo inline opzionale
 ```
 
 Regole di parsing:
-- indentazione a spazi, default 2 spazi per livello
-- niente tab
+- indentazione coerente: solo spazi o solo tab per documento
+- con spazi: default 2 spazi per livello
+- con tab: 1 tab per livello
 - salto indentazione massimo +1 livello per riga
 - commenti con prefisso //
 - heading Markdown-like da # a ######
@@ -267,9 +268,20 @@ A:
 ### 11) Compressione Lossless Automatica End-To-End
 
 Descrizione:
-- compressSlimLossless(source) esegue parse + compileToSlim(compact: true)
+- compressSlimLossless(source) esegue parse + compileToSlim(compressionMode: 'aggressive')
 - applica in cascata tutte le forme di compressione lossless disponibili
-- in modalità compatta, il serializer può sintetizzare childDefaults per classi ripetute sui figli diretti e rimuovere i duplicati dai figli
+- in modalità aggressive, il serializer può sintetizzare childDefaults per classi ripetute sui figli diretti e rimuovere i duplicati dai figli
+
+### 12) Modi Di Compressione Selezionabili
+
+Sono disponibili 3 modalità, selezionabili con `compressionMode`:
+- `none`: serializzazione leggibile, senza alias compatti
+- `compact`: alias + attributi posizionali + default impliciti, senza sintesi automatica dei childDefaults
+- `aggressive`: come `compact` + sintesi automatica childDefaults + indentazione output a tab (salvo override `indent`)
+
+Compatibilità:
+- l'opzione legacy `compact: true` continua a funzionare ed equivale a `compressionMode: 'aggressive'`
+- `compact: false` equivale a `compressionMode: 'none'`
 
 ## Precedenza E Risoluzione (Dettagli Operativi)
 
@@ -311,6 +323,7 @@ Modulo: src/lib/slimml.ts
 
 Tipi principali:
 - SlimAttributeValue = string | boolean
+- SlimCompressionMode = 'none' | 'compact' | 'aggressive'
 - SlimTextNode
 - SlimElementNode
 - SlimChildDefaultRule
@@ -340,6 +353,19 @@ compareTokenUsage(slim: string, html: string): TokenComparison
 formatParseError(error: SlimParseError): string
 ```
 
+Opzioni `SlimCompileOptions`:
+- `compressionMode?: 'none' | 'compact' | 'aggressive'`
+- `compact?: boolean` (legacy)
+- `indent?: string` (override esplicito dell'indentazione output)
+
+Firma aggiornata compressione:
+
+```ts
+compressSlimLossless(source: string, options?: SlimCompileOptions):
+  | { ok: true; slim: string; ast: SlimDocument; warnings: string[] }
+  | { ok: false; error: SlimParseError }
+```
+
 ## Stima Token: Nota Importante
 
 La funzione estimateTokenCount usa una euristica chars/4.
@@ -354,7 +380,7 @@ Usa questo blocco come system prompt o instruction base.
 Genera solo SlimML valido.
 
 Regole fondamentali:
-- Indentazione: 2 spazi, nessun tab.
+- Indentazione coerente: solo spazi (2 per livello) oppure solo tab (1 per livello).
 - Un nodo per riga.
 - Sintassi nodo: tag.class#id[attr=value ...] testo inline opzionale.
 - Commenti con //.
@@ -376,6 +402,7 @@ Compressioni da preferire (lossless):
 6) Ometti type sui button fuori dai form se e button.
 7) Ometti type sui button dentro form se e submit.
 8) Usa ereditarieta per attributi ripetuti sui figli diretti, es: +.menu [*class=item] o ~.btn-group[$c=btn $c=btn-outline-secondary].
+9) Se disponibile, usa compressionMode=aggressive per massima riduzione token lossless.
 
 Semantica implicita da rispettare:
 - input senza type => type=text
