@@ -33,10 +33,10 @@ SlimML comprime su tre livelli:
 Input SlimML:
 
 ```txt
-~.page#home[data-theme=light]
+#home.page[d-theme=light]
   # SlimML: HTML for AI workflows
   &.lead Write less syntax and keep structure readable.
-  +.menu [*class=nav-item]
+  +.menu [*c=nav-item]
     * Home
     * About
   ?
@@ -73,6 +73,7 @@ Regole di parsing:
 - indentazione coerente: solo spazi o solo tab per documento
 - con spazi: default 2 spazi per livello
 - con tab: 1 tab per livello
+- opzionale modalità minified: prefisso numerico di profondità per riga (es: 0..., 1..., 2...)
 - salto indentazione massimo +1 livello per riga
 - commenti con prefisso //
 - heading Markdown-like da # a ######
@@ -130,6 +131,7 @@ Mappa alias -> attributo:
 - r -> rel
 - c -> class
 - i -> id
+- d-* -> data-*
 
 Vantaggio:
 - riduzione rumore su attributi frequenti.
@@ -274,10 +276,11 @@ Descrizione:
 
 ### 12) Modi Di Compressione Selezionabili
 
-Sono disponibili 3 modalità, selezionabili con `compressionMode`:
+Sono disponibili 4 modalità, selezionabili con `compressionMode`:
 - `none`: serializzazione leggibile, senza alias compatti
 - `compact`: alias + attributi posizionali + default impliciti, senza sintesi automatica dei childDefaults
 - `aggressive`: come `compact` + sintesi automatica childDefaults + indentazione output a tab (salvo override `indent`)
+- `minified`: come `aggressive` + prefisso numerico di profondità (zero padding di indentazione)
 
 Compatibilità:
 - l'opzione legacy `compact: true` continua a funzionare ed equivale a `compressionMode: 'aggressive'`
@@ -310,12 +313,16 @@ Forme valide comuni:
   :[for=email] Email
   |#email[n=email required]
   $ Invia
-+.menu [*class=item]
+.panel[data-kind=base]
+.panel
+.panel#main
++.menu [*c=item]
   * Home
 ```
 
 Nota su spaziatura:
-- e valida sia +.menu[*class=item] sia +.menu [*class=item]
+- e valida sia +.menu[*c=item] sia +.menu [*c=item]
+- su div puoi omettere `~` quando la riga inizia con `.`, `#` o `[`
 
 ## API Completa
 
@@ -323,7 +330,7 @@ Modulo: src/lib/slimml.ts
 
 Tipi principali:
 - SlimAttributeValue = string | boolean
-- SlimCompressionMode = 'none' | 'compact' | 'aggressive'
+- SlimCompressionMode = 'none' | 'compact' | 'aggressive' | 'minified'
 - SlimTextNode
 - SlimElementNode
 - SlimChildDefaultRule
@@ -354,7 +361,7 @@ formatParseError(error: SlimParseError): string
 ```
 
 Opzioni `SlimCompileOptions`:
-- `compressionMode?: 'none' | 'compact' | 'aggressive'`
+- `compressionMode?: 'none' | 'compact' | 'aggressive' | 'minified'`
 - `compact?: boolean` (legacy)
 - `indent?: string` (override esplicito dell'indentazione output)
 
@@ -391,7 +398,7 @@ Alias tag consentiti:
 ~ div, ^ span, @ a, $ button, ! img, | input, % section, + ul, * li, = ol, ? form, : label, , textarea, & p.
 
 Alias attributi consentiti:
-h href, s src, a alt, t type, n name, p placeholder, v value, g target, r rel, c class, i id.
+h href, s src, a alt, t type, n name, p placeholder, v value, g target, r rel, c class, i id, d-* data-*.
 
 Compressioni da preferire (lossless):
 1) Usa alias tag/attributi quando possibile.
@@ -401,8 +408,8 @@ Compressioni da preferire (lossless):
 5) Ometti type sugli input se e text.
 6) Ometti type sui button fuori dai form se e button.
 7) Ometti type sui button dentro form se e submit.
-8) Usa ereditarieta per attributi ripetuti sui figli diretti, es: +.menu [*class=item] o ~.btn-group[$c=btn $c=btn-outline-secondary].
-9) Se disponibile, usa compressionMode=aggressive per massima riduzione token lossless.
+8) Usa ereditarieta per attributi ripetuti sui figli diretti, es: +.menu [*c=item] o .btn-group[$c=btn $c=btn-outline-secondary].
+9) Se disponibile, usa compressionMode=minified per massima riduzione token lossless.
 
 Semantica implicita da rispettare:
 - input senza type => type=text

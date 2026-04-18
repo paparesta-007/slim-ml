@@ -62,7 +62,7 @@ export interface HtmlParseFailure {
 
 export type HtmlParseResult = HtmlParseSuccess | HtmlParseFailure
 
-export const SLIM_COMPRESSION_MODES = ['none', 'compact', 'aggressive'] as const
+export const SLIM_COMPRESSION_MODES = ['none', 'compact', 'aggressive', 'minified'] as const
 export type SlimCompressionMode = (typeof SLIM_COMPRESSION_MODES)[number]
 
 export interface SlimCompileOptions {
@@ -75,6 +75,7 @@ interface ResolvedSlimCompileOptions {
   indent: string
   useCompactSyntax: boolean
   synthesizeChildDefaults: boolean
+  useDepthPrefix: boolean
 }
 
 const ALIAS_TAGS: Record<string, string> = {
@@ -223,7 +224,31 @@ function isIdentifierChar(char: string): boolean {
 }
 
 function resolveAttributeName(name: string): string {
-  return ATTR_ALIASES[name] ?? name
+  if (ATTR_ALIASES[name]) {
+    return ATTR_ALIASES[name]
+  }
+
+  if (name.length > 2 && name.toLowerCase().startsWith('d-')) {
+    return `data-${name.slice(2)}`
+  }
+
+  return name
+}
+
+function resolveAttributeOutputName(name: string, compact: boolean): string {
+  if (!compact) {
+    return name
+  }
+
+  if (ATTR_TO_ALIAS[name]) {
+    return ATTR_TO_ALIAS[name]
+  }
+
+  if (name.startsWith('data-') && name.length > 5) {
+    return `d-${name.slice(5)}`
+  }
+
+  return name
 }
 
 function parseAttributeValue(
@@ -682,7 +707,8 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
     }
 
     const stack: Array<SlimDocument | SlimElementNode> = [ast]
-    let indentStyle: 'space' | 'tab' | null = null
+    let indentationMode: 'space' | 'tab' | 'depth-prefix' | null = null
+    let canUseDepthPrefix = true
     const lines = source.replace(/\r\n?/g, '\n').split('\n')
 
     for (let index = 0; index < lines.length; index += 1) {
@@ -693,52 +719,75 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
         continue
       }
 
-      const indentation = rawLine.match(/^[ \t]*/)?.[0] ?? ''
-      const hasTabs = indentation.includes('\t')
-      const hasSpaces = indentation.includes(' ')
-
-      if (hasTabs && hasSpaces) {
-        throw new ParserIssue(
-          'Mixed tabs and spaces in indentation are not allowed.',
-          lineNumber,
-          1,
-        )
-      }
-
-      if (!indentStyle && indentation.length > 0) {
-        indentStyle = hasTabs ? 'tab' : 'space'
-      }
-
-      if (indentStyle === 'space' && hasTabs) {
-        throw new ParserIssue(
-          'Indentation style mismatch: expected spaces.',
-          lineNumber,
-          1,
-        )
-      }
-
-      if (indentStyle === 'tab' && hasSpaces) {
-        throw new ParserIssue(
-          'Indentation style mismatch: expected tabs.',
-          lineNumber,
-          1,
-        )
+      const depthPrefixMatch = rawLine.match(/^(\d+)(\S.*)$/)
+      if (!indentationMode && canUseDepthPrefix && depthPrefixMatch) {
+        indentationMode = 'depth-prefix'
       }
 
       let depth = 0
-      if (indentStyle === 'tab') {
-        depth = indentation.length
-      } else {
-        const leadingSpaces = indentation.length
-        if (leadingSpaces % indentSize !== 0) {
+      let content = ''
+
+      if (indentationMode === 'depth-prefix') {
+        if (!depthPrefixMatch) {
           throw new ParserIssue(
-            `Indentation must be a multiple of ${indentSize} spaces.`,
+            'Depth-prefix mode expects each line to start with a numeric depth.',
             lineNumber,
             1,
           )
         }
 
-        depth = leadingSpaces / indentSize
+        depth = Number.parseInt(depthPrefixMatch[1], 10)
+        content = depthPrefixMatch[2]
+      } else {
+        canUseDepthPrefix = false
+        const indentation = rawLine.match(/^[ \t]*/)?.[0] ?? ''
+        const hasTabs = indentation.includes('\t')
+        const hasSpaces = indentation.includes(' ')
+
+        if (hasTabs && hasSpaces) {
+          throw new ParserIssue(
+            'Mixed tabs and spaces in indentation are not allowed.',
+            lineNumber,
+            1,
+          )
+        }
+
+        if (!indentationMode && indentation.length > 0) {
+          indentationMode = hasTabs ? 'tab' : 'space'
+        }
+
+        if (indentationMode === 'space' && hasTabs) {
+          throw new ParserIssue(
+            'Indentation style mismatch: expected spaces.',
+            lineNumber,
+            1,
+          )
+        }
+
+        if (indentationMode === 'tab' && hasSpaces) {
+          throw new ParserIssue(
+            'Indentation style mismatch: expected tabs.',
+            lineNumber,
+            1,
+          )
+        }
+
+        if (indentationMode === 'tab') {
+          depth = indentation.length
+        } else {
+          const leadingSpaces = indentation.length
+          if (leadingSpaces % indentSize !== 0) {
+            throw new ParserIssue(
+              `Indentation must be a multiple of ${indentSize} spaces.`,
+              lineNumber,
+              1,
+            )
+          }
+
+          depth = leadingSpaces / indentSize
+        }
+
+        content = rawLine.slice(indentation.length)
       }
 
       if (depth > stack.length - 1) {
@@ -753,7 +802,6 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
         stack.pop()
       }
 
-      const content = rawLine.slice(indentation.length)
       if (content.startsWith('//')) {
         continue
       }
@@ -1161,8 +1209,10 @@ function emitElementDeclaration(
   childDefaults?: Record<string, SlimChildDefaultRule>,
   parentChildDefaults?: Record<string, SlimChildDefaultRule>,
 ): string {
-  const tagToken = compact ? TAG_TO_ALIAS[node.tag] ?? node.tag : node.tag
-  let declaration = tagToken
+  const lowerTag = node.tag.toLowerCase()
+  const tagToken = compact ? TAG_TO_ALIAS[lowerTag] ?? node.tag : node.tag
+  const canUseImplicitDiv = compact && lowerTag === 'div'
+  let declaration = canUseImplicitDiv ? '' : tagToken
 
   const emissionContext = compact
     ? resolveSlimEmissionContext(node, parentChildDefaults)
@@ -1184,13 +1234,13 @@ function emitElementDeclaration(
   const attrs = { ...emissionContext.attrs }
 
   const isDefaultInputTextType =
-    node.tag.toLowerCase() === 'input' && attrs.type === 'text'
+    lowerTag === 'input' && attrs.type === 'text'
   const isDefaultFormSubmitType =
-    node.tag.toLowerCase() === 'button' &&
+    lowerTag === 'button' &&
     parent?.tag.toLowerCase() === 'form' &&
     attrs.type === 'submit'
   const isDefaultButtonType =
-    node.tag.toLowerCase() === 'button' &&
+    lowerTag === 'button' &&
     parent?.tag.toLowerCase() !== 'form' &&
     attrs.type === 'button'
 
@@ -1198,18 +1248,18 @@ function emitElementDeclaration(
     delete attrs.type
   }
 
-  if (compact && typeof attrs.href === 'string' && node.tag === 'a') {
+  if (compact && typeof attrs.href === 'string' && lowerTag === 'a') {
     tokens.push(quoteSlimValue(attrs.href))
     delete attrs.href
   }
 
-  if (compact && typeof attrs.src === 'string' && node.tag === 'img') {
+  if (compact && typeof attrs.src === 'string' && lowerTag === 'img') {
     tokens.push(quoteSlimValue(attrs.src))
     delete attrs.src
   }
 
   for (const [name, value] of Object.entries(attrs)) {
-    const outputName = compact ? ATTR_TO_ALIAS[name] ?? name : name
+    const outputName = resolveAttributeOutputName(name, compact)
 
     if (typeof value === 'boolean') {
       if (value) {
@@ -1225,7 +1275,7 @@ function emitElementDeclaration(
 
   if (effectiveChildDefaults) {
     for (const [childTag, rule] of Object.entries(effectiveChildDefaults)) {
-      const childToken = compact ? TAG_TO_ALIAS[childTag] ?? childTag : childTag
+      const childToken = compact ? TAG_TO_ALIAS[childTag.toLowerCase()] ?? childTag : childTag
 
       for (const className of rule.classes) {
         const classToken = compact ? ATTR_TO_ALIAS.class : 'class'
@@ -1233,7 +1283,7 @@ function emitElementDeclaration(
       }
 
       for (const [name, value] of Object.entries(rule.attrs)) {
-        const outputName = compact ? ATTR_TO_ALIAS[name] ?? name : name
+        const outputName = resolveAttributeOutputName(name, compact)
 
         if (typeof value === 'boolean') {
           if (value) {
@@ -1245,6 +1295,10 @@ function emitElementDeclaration(
         tokens.push(`${childToken}${outputName}=${quoteSlimValue(value)}`)
       }
     }
+  }
+
+  if (canUseImplicitDiv && declaration.length === 0 && tokens.length === 0) {
+    declaration = tagToken
   }
 
   if (tokens.length > 0) {
@@ -1261,10 +1315,12 @@ function emitNodeToSlim(
   parent?: SlimElementNode,
   parentChildDefaults?: Record<string, SlimChildDefaultRule>,
 ): string[] {
-  const indent = options.indent.repeat(depth)
+  const linePrefix = options.useDepthPrefix
+    ? `${depth}`
+    : options.indent.repeat(depth)
 
   if (node.type === 'text') {
-    return [`${indent}| ${node.value}`]
+    return [`${linePrefix}| ${node.value}`]
   }
 
   const synthesizedChildDefaults = options.synthesizeChildDefaults
@@ -1282,14 +1338,19 @@ function emitNodeToSlim(
     parentChildDefaults,
   )
   const lines = [
-    inlineText !== undefined ? `${indent}${declaration} ${inlineText}` : `${indent}${declaration}`,
+    inlineText !== undefined
+      ? `${linePrefix}${declaration} ${inlineText}`
+      : `${linePrefix}${declaration}`,
   ]
 
   const emittedInlineFromChild =
     inlineText !== undefined && !node.text && node.children.length === 1
 
   if (node.text && node.children.length > 0) {
-    lines.push(`${options.indent.repeat(depth + 1)}| ${node.text}`)
+    const textPrefix = options.useDepthPrefix
+      ? `${depth + 1}`
+      : options.indent.repeat(depth + 1)
+    lines.push(`${textPrefix}| ${node.text}`)
   }
 
   for (const child of node.children) {
@@ -1314,9 +1375,13 @@ function resolveSlimCompileOptions(options: SlimCompileOptions): ResolvedSlimCom
   const compressionMode = resolveCompressionMode(options)
 
   return {
-    indent: options.indent ?? (compressionMode === 'aggressive' ? '\t' : '  '),
+    indent:
+      options.indent ??
+      (compressionMode === 'minified' ? '' : compressionMode === 'aggressive' ? '\t' : '  '),
     useCompactSyntax: compressionMode !== 'none',
-    synthesizeChildDefaults: compressionMode === 'aggressive',
+    synthesizeChildDefaults:
+      compressionMode === 'aggressive' || compressionMode === 'minified',
+    useDepthPrefix: compressionMode === 'minified',
   }
 }
 

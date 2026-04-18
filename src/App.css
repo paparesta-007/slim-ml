@@ -327,6 +327,11 @@
   font-weight: 700;
 }
 
+.sl-token-depth {
+  color: #6d4a00;
+  font-weight: 700;
+}
+
 .dom-preview-frame {
   width: 100%;
   padding: 0;

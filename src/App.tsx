@@ -14,23 +14,23 @@ import {
 import './App.css'
 
 const STARTER_SLIM = `// SlimML sample
-~.page#home[data-theme=light]
+#home.page[d-theme=light]
   # SlimML: HTML for AI workflows
   &.lead Write less syntax and keep structure readable.
-  ~.actions
+  .actions
     @[/docs g=_blank].btn Docs
-    $[t=button].btn.btn-ghost Try playground
-  +.menu [*class=nav-item]
+    $.btn.btn-ghost Try playground
+  +.menu [*c=nav-item]
     * Home
     * About
   ?
     |[n=email p="Your email" required]
     $ Subscribe
-  ~.cards
-    ~.card[data-kind=cost]
+  .cards[~c=card]
+    [d-kind=cost]
       h3 Token savings
       & Cut output noise from repetitive closing tags.
-    ~.card[data-kind=speed]
+    [d-kind=speed]
       h3 Faster iteration
       & Parse errors tell the model exactly what to fix.
   ![https://images.unsplash.com/photo-1557683316-973673baf926?w=800 a="Abstract color waves"]`
@@ -40,7 +40,7 @@ const STARTER_HTML = `<div id="home" class="page" data-theme="light">
   <p class="lead">Write less syntax and keep structure readable.</p>
   <div class="actions">
     <a class="btn" href="/docs" target="_blank">Docs</a>
-    <button class="btn btn-ghost" type="button">Try playground</button>
+    <button class="btn btn-ghost">Try playground</button>
   </div>
   <ul class="menu">
     <li class="nav-item">Home</li>
@@ -67,6 +67,7 @@ const COMPRESSION_MODE_LABELS: Record<SlimCompressionMode, string> = {
   none: 'None',
   compact: 'Compact',
   aggressive: 'Aggressive',
+  minified: 'Minified',
 }
 
 interface DomPreviewProps {
@@ -290,35 +291,43 @@ function highlightSlimML(source: string): string {
       const content = line.slice(indentation.length)
       const indentPart = escapeHtml(indentation)
 
-      if (!content) {
+      let depthPrefixPart = ''
+      let contentBody = content
+      const depthPrefixMatch = content.match(/^(\d+)(\S.*)$/)
+      if (depthPrefixMatch) {
+        depthPrefixPart = `<span class="sl-token-depth">${escapeHtml(depthPrefixMatch[1])}</span>`
+        contentBody = depthPrefixMatch[2]
+      }
+
+      if (!contentBody) {
         return indentPart
       }
 
-      if (content.startsWith('//')) {
-        return `${indentPart}<span class="sl-token-comment">${escapeHtml(content)}</span>`
+      if (contentBody.startsWith('//')) {
+        return `${indentPart}${depthPrefixPart}<span class="sl-token-comment">${escapeHtml(contentBody)}</span>`
       }
 
-      const headingMatch = content.match(/^(#{1,6})\s+(.+)$/)
+      const headingMatch = contentBody.match(/^(#{1,6})\s+(.+)$/)
       if (headingMatch) {
-        return `${indentPart}<span class="sl-token-heading-mark">${escapeHtml(
+        return `${indentPart}${depthPrefixPart}<span class="sl-token-heading-mark">${escapeHtml(
           headingMatch[1],
         )}</span> <span class="sl-token-heading-text">${escapeHtml(headingMatch[2])}</span>`
       }
 
-      if (content.startsWith('| ')) {
-        return `${indentPart}<span class="sl-token-pipe">|</span> <span class="sl-token-text">${escapeHtml(
-          content.slice(2),
+      if (contentBody.startsWith('| ')) {
+        return `${indentPart}${depthPrefixPart}<span class="sl-token-pipe">|</span> <span class="sl-token-text">${escapeHtml(
+          contentBody.slice(2),
         )}</span>`
       }
 
-      const { declaration, text } = splitDeclarationAndTextForHighlight(content)
+      const { declaration, text } = splitDeclarationAndTextForHighlight(contentBody)
       const declarationPart = highlightDeclaration(declaration)
 
       if (text === undefined) {
-        return `${indentPart}${declarationPart}`
+        return `${indentPart}${depthPrefixPart}${declarationPart}`
       }
 
-      return `${indentPart}${declarationPart} <span class="sl-token-text">${escapeHtml(text)}</span>`
+      return `${indentPart}${depthPrefixPart}${declarationPart} <span class="sl-token-text">${escapeHtml(text)}</span>`
     })
     .join('\n')
 }
@@ -752,7 +761,7 @@ function App() {
           </article>
           <article>
             <h3>Formatting</h3>
-            <p>Aggressive mode emits tab indentation; other modes keep two-space nesting</p>
+            <p>Minified mode uses numeric depth prefixes; aggressive emits tabs; others use spaces</p>
           </article>
         </div>
       </section>
