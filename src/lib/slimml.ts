@@ -123,6 +123,10 @@ const ALIAS_TAGS: Record<string, string> = {
   w: 'dl',
   x: 'dt',
   y: 'dd',
+  svg: 'svg',
+  path: 'path',
+  circle: 'circle',
+  rect: 'rect',
 }
 
 const IMPLICIT_CHILD_TAG_BY_PARENT: Record<string, string> = {
@@ -577,7 +581,7 @@ function looksLikeDepthPrefixedSlimLine(line: string): boolean {
 }
 
 function isIdentifierChar(char: string): boolean {
-  return /[a-zA-Z0-9:_-]/.test(char)
+  return /[a-zA-Z0-9:_\-\/%\[\]\\]/.test(char)
 }
 
 function shouldUseTagAliasToken(declaration: string, index = 0): boolean {
@@ -1394,7 +1398,7 @@ function parseLooseInlineContent(
   }
 
   const firstToken = tokens[0]
-  if (!isLooseAttributeToken(firstToken, node)) {
+  if (!isLooseAttributeToken(firstToken, node) && !firstToken.startsWith('[')) {
     return content.trim().length > 0 ? content.trim() : undefined
   }
 
@@ -1444,7 +1448,9 @@ function parseLooseInlineContent(
       continue
     }
 
-    textTokens.push(token)
+    for (let j = index; j < tokens.length; j += 1) {
+      textTokens.push(tokens[j])
+    }
     break
   }
 
@@ -1477,29 +1483,36 @@ function parseElementDeclaration(
 
   const firstChar = declaration[index]
   const aliasTag = ALIAS_TAGS[firstChar]
+  let parsedAlias = false
+
   if (aliasTag) {
     const hasAliasBoundary = shouldUseTagAliasToken(declaration, index)
     const hasRepeatedTagName = shouldConsumeRepeatedTagName(declaration, index + 1, aliasTag)
     if (hasAliasBoundary || hasRepeatedTagName) {
       tag = aliasTag
       index += 1
+      parsedAlias = true
 
       if (hasRepeatedTagName) {
         index += aliasTag.length
       }
     }
-  } else if (isIdentifierChar(firstChar)) {
-    const start = index
-    while (index < declaration.length && isIdentifierChar(declaration[index])) {
-      index += 1
+  }
+
+  if (!parsedAlias) {
+    if (isIdentifierChar(firstChar)) {
+      const start = index
+      while (index < declaration.length && isIdentifierChar(declaration[index])) {
+        index += 1
+      }
+      tag = declaration.slice(start, index)
+    } else if (firstChar !== '.' && firstChar !== '#' && firstChar !== '[') {
+      throw new ParserIssue(
+        `Unsupported declaration start "${firstChar}".`,
+        lineNumber,
+        1,
+      )
     }
-    tag = declaration.slice(start, index)
-  } else if (firstChar !== '.' && firstChar !== '#' && firstChar !== '[') {
-    throw new ParserIssue(
-      `Unsupported declaration start "${firstChar}".`,
-      lineNumber,
-      1,
-    )
   }
 
   const node: SlimElementNode = {
@@ -1641,12 +1654,35 @@ function parseElementDeclaration(
       index = end + 1
       continue
     }
+    
+    // Check for inline tailwind classes with slashes or arbitrary values: .w-1/2, .bg-black/90, .mt-[20px] 
+    // They should have been caught by the . class selector but they might have special chars.
+    let specialCharMatch = false
+    if (char === '/' || char === ':' || char === '%' || char === '-') {
+       // if we are right after a class selector that aborted early because of this char
+       const startSpecial = index
+       while (index < declaration.length && (isIdentifierChar(declaration[index]) || declaration[index] === '/' || declaration[index] === '%' || declaration[index] === '[' || declaration[index] === ']' || declaration[index] === '\\')) {
+         index += 1
+       }
+       const specialTail = declaration.slice(startSpecial, index)
+       
+       if (node.classes.length > 0) {
+         node.classes[node.classes.length - 1] += specialTail
+       } else {
+         // Should not happen as first char, but just in case
+         node.classes.push(specialTail)
+       }
+       specialCharMatch = true
+       continue
+    }
 
-    throw new ParserIssue(
-      `Unexpected token "${char}" in declaration.`,
-      lineNumber,
-      index + 1,
-    )
+    if (!specialCharMatch) {
+      throw new ParserIssue(
+        `Unexpected token "${char}" in declaration.`,
+        lineNumber,
+        index + 1,
+      )
+    }
   }
 
   if (text) {
@@ -1676,16 +1712,43 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
   const stack: Array<SlimDocument | SlimElementNode> = [ast]
   let indentationMode: 'space' | 'tab' | 'depth-prefix' | null = null
   let canUseDepthPrefix = true
-  const lines = source.replace(/\r\n?/g, '\n').split('\n')
+
+  const rawLines = source.replace(/\r\n?/g, '\n').split('\n')
+  let isDepthPrefix = false
+  for (const line of rawLines) {
+    if (line.trim().length > 0) {
+      if (looksLikeDepthPrefixedSlimLine(line)) {
+        isDepthPrefix = true
+      }
+      break
+    }
+  }
+
+  const lines: { text: string; lineNumber: number }[] = []
+  if (isDepthPrefix) {
+    for (let i = 0; i < rawLines.length; i += 1) {
+      const line = rawLines[i]
+      if (line.trim().length === 0) continue
+      
+      if (!/^\d/.test(line.trimStart()) && lines.length > 0) {
+        lines[lines.length - 1].text += ' ' + line.trim()
+      } else {
+        lines.push({ text: line, lineNumber: i + 1 })
+      }
+    }
+  } else {
+    for (let i = 0; i < rawLines.length; i += 1) {
+      if (rawLines[i].trim().length > 0) {
+        lines.push({ text: rawLines[i], lineNumber: i + 1 })
+      }
+    }
+  }
+
   const errors: SlimParseError[] = []
 
   for (let index = 0; index < lines.length; index += 1) {
-    const rawLine = lines[index]
-    const lineNumber = index + 1
-
-    if (rawLine.trim().length === 0) {
-      continue
-    }
+    const rawLine = lines[index].text
+    const lineNumber = lines[index].lineNumber
 
     try {
       const depthPrefixMatch = rawLine.match(/^(\d+)(\S.*)$/)
@@ -1760,16 +1823,14 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
       }
 
       if (depth > stack.length - 1) {
-        throw new ParserIssue(
-          'Indentation jump detected. Nest by one level at a time.',
-          lineNumber,
-          1,
-        )
+        depth = stack.length - 1
       }
 
       while (stack.length > depth + 1) {
         stack.pop()
       }
+
+      content = content.replace(/^\\([^A-Za-z0-9])/, '$1')
 
       if (content.startsWith('//')) {
         continue
