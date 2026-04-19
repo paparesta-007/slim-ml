@@ -485,6 +485,7 @@ interface SlimInputInterpretationSuccess {
   ast: SlimDocument
   mode: 'slim' | 'html-jsx'
   normalizedSlim?: string
+  warnings: string[]
 }
 
 interface SlimInputInterpretationFailure {
@@ -504,6 +505,7 @@ function interpretSlimSource(
       ok: true,
       ast: parsedSlim.ast,
       mode: 'slim',
+      warnings: parsedSlim.warnings,
     }
   }
 
@@ -528,6 +530,7 @@ function interpretSlimSource(
     ast: converted.ast,
     mode: 'html-jsx',
     normalizedSlim: converted.slim,
+    warnings: converted.warnings,
   }
 }
 
@@ -560,6 +563,7 @@ function App() {
   const previewAst = slimInterpretation.ok ? slimInterpretation.ast : htmlParse.ok ? htmlParse.ast : null
 
   const slimError = slimInterpretation.ok ? null : slimInterpretation.error
+  const slimWarnings = slimInterpretation.ok ? slimInterpretation.warnings : []
   const htmlError = htmlParse.ok ? null : htmlParse.error
 
   const tokenStats = useMemo(
@@ -814,23 +818,25 @@ function App() {
             </button>
           </div>
           <div className="compression-mode-control">
-            <label htmlFor="compression-mode">Compression mode</label>
-            <select
-              id="compression-mode"
-              className="mode-select"
-              value={compressionMode}
-              onChange={(event) => {
-                const nextMode = event.target.value as SlimCompressionMode
-                setCompressionMode(nextMode)
-                setActionMessage(`Compression mode set to ${COMPRESSION_MODE_LABELS[nextMode]}.`)
-              }}
-            >
+            <label>Compression mode</label>
+            <div className="segmented-control" role="radiogroup" aria-label="Compression mode">
               {SLIM_COMPRESSION_MODES.map((mode) => (
-                <option key={mode} value={mode}>
+                <button
+                  key={mode}
+                  type="button"
+                  className="segmented-btn"
+                  role="radio"
+                  aria-checked={compressionMode === mode}
+                  data-active={compressionMode === mode}
+                  onClick={() => {
+                    setCompressionMode(mode)
+                    setActionMessage(`Compression mode set to ${COMPRESSION_MODE_LABELS[mode]}.`)
+                  }}
+                >
                   {COMPRESSION_MODE_LABELS[mode]}
-                </option>
+                </button>
               ))}
-            </select>
+            </div>
           </div>
           <div className="preview-cdn-control" role="group" aria-label="DOM preview frameworks">
             <span>DOM CDN</span>
@@ -913,8 +919,8 @@ function App() {
               />
             </div>
           </div>
-          <p className={slimError ? 'status status-error' : 'status status-ok'} aria-live="polite">
-            {slimError ?? 'Slim parser status: valid.'}
+          <p className={slimError ? 'status status-error' : slimWarnings.length > 0 ? 'status status-warn' : 'status status-ok'} aria-live="polite">
+            {slimError ?? (slimWarnings.length > 0 ? `⚠ ${slimWarnings.length} auto-fix${slimWarnings.length > 1 ? 'es' : ''}: ${slimWarnings.join('; ')}` : 'Slim parser status: valid.')}
           </p>
         </section>
 

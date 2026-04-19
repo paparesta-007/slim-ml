@@ -655,6 +655,16 @@ function isExplicitDeclarationInImplicitContext(content: string): boolean {
 }
 
 function resolveAttributeName(name: string): string {
+  // Accept React-ism: className → class
+  if (name === 'className') {
+    return 'class'
+  }
+
+  // Accept React-ism: htmlFor → for
+  if (name === 'htmlFor') {
+    return 'for'
+  }
+
   if (ATTR_ALIASES[name]) {
     return ATTR_ALIASES[name]
   }
@@ -1639,12 +1649,9 @@ function parseElementDeclaration(
         end += 1
       }
 
+      // Auto-close unclosed bracket at end of declaration instead of erroring
       if (declaration[end] !== ']') {
-        throw new ParserIssue(
-          'Attribute block is missing a closing bracket.',
-          lineNumber,
-          index + 1,
-        )
+        end = declaration.length
       }
       
       const content = declaration.slice(index + 1, end).trim()
@@ -1687,11 +1694,9 @@ function parseElementDeclaration(
     }
 
     if (!specialCharMatch) {
-      throw new ParserIssue(
-        `Unexpected token "${char}" in declaration.`,
-        lineNumber,
-        index + 1,
-      )
+      // Graceful skip: instead of hard error, just stop parsing the declaration
+      // and treat the rest as consumed
+      break
     }
   }
 
@@ -1718,18 +1723,20 @@ function parseElementDeclaration(
     }
   }
 
+  // Void elements can't contain text — silently discard instead of hard error
   if (VOID_TAGS.has(node.tag.toLowerCase()) && node.text) {
-    throw new ParserIssue(
-      `Void element <${node.tag}> cannot contain inline text.`,
-      lineNumber,
-      1,
-    )
+    node.text = undefined
   }
 
   return { node }
 }
 
 export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
+  // Strip BOM, zero-width chars, and other invisible Unicode artifacts
+  const cleanedSource = source
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '')
+
   const ast: SlimDocument = {
     type: 'document',
     children: [],
@@ -1738,8 +1745,9 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
   const stack: Array<SlimDocument | SlimElementNode> = [ast]
   let indentationMode: 'space' | 'tab' | 'depth-prefix' | null = null
   let canUseDepthPrefix = true
+  const warnings: string[] = []
 
-  const rawLines = source.replace(/\r\n?/g, '\n').split('\n')
+  const rawLines = cleanedSource.replace(/\r\n?/g, '\n').split('\n')
   let isDepthPrefix = false
   for (const line of rawLines) {
     if (line.trim().length > 0) {
@@ -1788,65 +1796,61 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
 
       if (indentationMode === 'depth-prefix') {
         if (!depthPrefixMatch) {
-          throw new ParserIssue(
-            'Depth-prefix mode expects each line to start with a numeric depth.',
-            lineNumber,
-            1,
-          )
+          // Graceful: treat line without depth prefix as continuation at current depth
+          depth = Math.max(0, stack.length - 1)
+          content = rawLine.trim()
+          warnings.push(`Line ${lineNumber}: missing depth prefix, assumed depth ${depth}.`)
+        } else {
+          depth = Number.parseInt(depthPrefixMatch[1], 10)
+          content = depthPrefixMatch[2]
         }
-
-        depth = Number.parseInt(depthPrefixMatch[1], 10)
-        content = depthPrefixMatch[2]
       } else {
         canUseDepthPrefix = false
         const indentation = rawLine.match(/^[ \t]*/)?.[0] ?? ''
         const hasTabs = indentation.includes('\t')
         const hasSpaces = indentation.includes(' ')
 
+        // Auto-normalize mixed tabs and spaces instead of erroring
         if (hasTabs && hasSpaces) {
-          throw new ParserIssue(
-            'Mixed tabs and spaces in indentation are not allowed.',
-            lineNumber,
-            1,
-          )
-        }
-
-        if (!indentationMode && indentation.length > 0) {
-          indentationMode = hasTabs ? 'tab' : 'space'
-        }
-
-        if (indentationMode === 'space' && hasTabs) {
-          throw new ParserIssue(
-            'Indentation style mismatch: expected spaces.',
-            lineNumber,
-            1,
-          )
-        }
-
-        if (indentationMode === 'tab' && hasSpaces) {
-          throw new ParserIssue(
-            'Indentation style mismatch: expected tabs.',
-            lineNumber,
-            1,
-          )
-        }
-
-        if (indentationMode === 'tab') {
-          depth = indentation.length
+          warnings.push(`Line ${lineNumber}: mixed tabs and spaces, auto-normalized.`)
+          // Convert to the dominant mode, or spaces if no mode set yet
+          const normalizedIndent = indentation.replace(/\t/g, '  ')
+          const leadingSpaces = normalizedIndent.length
+          depth = Math.round(leadingSpaces / indentSize)
+          if (!indentationMode) {
+            indentationMode = 'space'
+          }
+          content = rawLine.slice(indentation.length).trimStart()
         } else {
-          const leadingSpaces = indentation.length
-          if (leadingSpaces % indentSize !== 0) {
-            throw new ParserIssue(
-              `Indentation must be a multiple of ${indentSize} spaces.`,
-              lineNumber,
-              1,
-            )
+          if (!indentationMode && indentation.length > 0) {
+            indentationMode = hasTabs ? 'tab' : 'space'
           }
 
-          depth = leadingSpaces / indentSize
+          // Auto-normalize style mismatch instead of erroring
+          if (indentationMode === 'space' && hasTabs) {
+            warnings.push(`Line ${lineNumber}: expected spaces but found tabs, auto-converted.`)
+            const normalizedIndent = indentation.replace(/\t/g, '  ')
+            depth = Math.round(normalizedIndent.length / indentSize)
+            content = rawLine.slice(indentation.length).trimStart()
+          } else if (indentationMode === 'tab' && hasSpaces) {
+            warnings.push(`Line ${lineNumber}: expected tabs but found spaces, auto-converted.`)
+            depth = Math.round(indentation.length / indentSize)
+            content = rawLine.slice(indentation.length).trimStart()
+          } else if (indentationMode === 'tab') {
+            depth = indentation.length
+            content = rawLine.slice(indentation.length).trimStart()
+          } else {
+            const leadingSpaces = indentation.length
+            // Snap to nearest valid depth instead of erroring
+            if (leadingSpaces % indentSize !== 0) {
+              warnings.push(`Line ${lineNumber}: indentation (${leadingSpaces} spaces) not a multiple of ${indentSize}, snapped to nearest.`)
+              depth = Math.round(leadingSpaces / indentSize)
+            } else {
+              depth = leadingSpaces / indentSize
+            }
+            content = rawLine.slice(indentation.length).trimStart()
+          }
         }
-
-        content = rawLine.slice(indentation.length).trimStart()
       }
 
       if (depth > stack.length - 1) {
@@ -1900,7 +1904,19 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
           line: lineNumber,
         }
       } else {
-        node = parseElementDeclaration(content, lineNumber).node
+        try {
+          node = parseElementDeclaration(content, lineNumber).node
+        } catch (declError) {
+          // Graceful fallback: treat unparseable line as text node
+          if (declError instanceof ParserIssue) {
+            warnings.push(`Line ${lineNumber}: ${declError.message} — treated as text.`)
+          }
+          node = {
+            type: 'text',
+            value: content,
+            line: lineNumber,
+          }
+        }
       }
 
       getChildren(stack[stack.length - 1]).push(node)
@@ -1909,34 +1925,40 @@ export function parseSlimML(source: string, indentSize = 2): SlimParseResult {
         stack.push(node)
       }
     } catch (error) {
+      // Last resort: if we truly can't handle the line, add as warning + text node
       if (error instanceof ParserIssue) {
-        errors.push({
-          message: error.message,
-          line: error.line,
-          column: error.column,
-        })
-        continue
+        warnings.push(`Line ${lineNumber}: ${error.message} — skipped.`)
+      } else {
+        warnings.push(`Line ${lineNumber}: unexpected parser error — skipped.`)
       }
-      errors.push({
-        message: 'Unknown parser error.',
-        line: lineNumber,
-        column: 1,
-      })
+
+      // Try to add the raw content as a text node instead of discarding
+      const fallbackContent = rawLine.trim()
+      if (fallbackContent.length > 0) {
+        const fallbackNode: SlimTextNode = {
+          type: 'text',
+          value: fallbackContent,
+          line: lineNumber,
+        }
+        getChildren(stack[stack.length - 1]).push(fallbackNode)
+      }
       continue
     }
   }
 
+  // Never hard-fail: always return ok with warnings instead of errors
+  // Only fail if we truly have zero parseable content from a non-empty source
   if (errors.length > 0) {
-    return {
-      ok: false,
-      errors,
+    // Convert remaining hard errors to warnings and include whatever we parsed
+    for (const err of errors) {
+      warnings.push(`Line ${err.line}, col ${err.column}: ${err.message}`)
     }
   }
 
   return {
     ok: true,
     ast,
-    warnings: [],
+    warnings,
   }
 }
 
@@ -2744,7 +2766,7 @@ export function convertHtmlToSlim(
   | { ok: false; error: string } {
   const parsed = parseHtmlToAst(html)
   if (!parsed.ok) {
-    return parsed
+    return parsed as { ok: false; error: string }
   }
 
   return {
@@ -2763,7 +2785,7 @@ export function compressSlimLossless(
   | { ok: false; errors: SlimParseError[] } {
   const parsed = parseSlimML(source)
   if (!parsed.ok) {
-    return parsed
+    return parsed as { ok: false; errors: SlimParseError[] }
   }
 
   const compileOptions: SlimCompileOptions =
