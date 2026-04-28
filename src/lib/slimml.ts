@@ -79,20 +79,20 @@ interface ResolvedSlimCompileOptions {
 }
 
 const ALIAS_TAGS: Record<string, string> = {
-  '~': 'div',
-  '^': 'span',
-  '@': 'a',
-  '$': 'button',
-  '!': 'img',
-  '|': 'input',
-  '%': 'section',
-  '+': 'ul',
-  '*': 'li',
-  '=': 'ol',
-  '?': 'form',
-  ':': 'label',
-  ',': 'textarea',
-  '&': 'p',
+  d: 'div',
+  s: 'span',
+  a: 'a',
+  b: 'button',
+  i: 'img',
+  n: 'input',
+  c: 'section',
+  u: 'ul',
+  l: 'li',
+  o: 'ol',
+  r: 'form',
+  e: 'label',
+  t: 'textarea',
+  p: 'p',
   N: 'nav',
   H: 'header',
   F: 'footer',
@@ -101,7 +101,7 @@ const ALIAS_TAGS: Record<string, string> = {
   Z: 'aside',
   B: 'strong',
   I: 'em',
-  '`': 'code',
+  k: 'code',
   P: 'pre',
   G: 'figure',
   f: 'figcaption',
@@ -149,20 +149,20 @@ const VALUE_CONTINUATION_ATTRIBUTES = new Set([
 ])
 
 const TAG_TO_ALIAS: Record<string, string> = {
-  div: '~',
-  span: '^',
-  a: '@',
-  button: '$',
-  img: '!',
-  input: '|',
-  section: '%',
-  ul: '+',
-  li: '*',
-  ol: '=',
-  form: '?',
-  label: ':',
-  textarea: ',',
-  p: '&',
+  div: 'd',
+  span: 's',
+  a: 'a',
+  button: 'b',
+  img: 'i',
+  input: 'n',
+  section: 'c',
+  ul: 'u',
+  li: 'l',
+  ol: 'o',
+  form: 'r',
+  label: 'e',
+  textarea: 't',
+  p: 'p',
   nav: 'N',
   header: 'H',
   footer: 'F',
@@ -171,7 +171,7 @@ const TAG_TO_ALIAS: Record<string, string> = {
   aside: 'Z',
   strong: 'B',
   em: 'I',
-  code: '`',
+  code: 'k',
   pre: 'P',
   figure: 'G',
   figcaption: 'f',
@@ -1716,9 +1716,31 @@ function parseElementDeclaration(
     }
 
     if (currentText) {
-      const looseText = parseLooseInlineContent(currentText, node, lineNumber)
-      if (looseText !== undefined) {
-        node.text = looseText
+      if (currentText.startsWith('> ')) {
+        const itemsStr = currentText.slice(2).trim()
+        const items = itemsStr.includes('|')
+          ? itemsStr.split('|').map(s => s.trim())
+          : itemsStr.split(',').map(s => s.trim())
+
+        const childTag = IMPLICIT_CHILD_TAG_BY_PARENT[node.tag.toLowerCase()] || 'div'
+
+        for (const item of items) {
+          if (!item) continue
+          node.children.push({
+            type: 'element',
+            tag: childTag,
+            classes: [],
+            attrs: {},
+            text: item,
+            children: [],
+            line: lineNumber,
+          })
+        }
+      } else {
+        const looseText = parseLooseInlineContent(currentText, node, lineNumber)
+        if (looseText !== undefined) {
+          node.text = looseText
+        }
       }
     }
   }
@@ -2545,21 +2567,46 @@ function emitNodeToSlim(
       : `${linePrefix}${declaration}`,
   ]
 
-  const emittedInlineFromChild =
-    inlineText !== undefined && !node.text && node.children.length === 1
+  let emittedColumnar = false
+  if (options.useCompactSyntax && !node.text && node.children.length > 0) {
+    const implicitChildTag = IMPLICIT_CHILD_TAG_BY_PARENT[node.tag.toLowerCase()]
+    if (implicitChildTag && node.children.every(child => 
+      child.type === 'element' &&
+      child.tag.toLowerCase() === implicitChildTag &&
+      !child.id &&
+      child.classes.length === 0 &&
+      Object.keys(child.attrs).length === 0 &&
+      !child.childDefaults &&
+      flattenInlineText(child) !== undefined
+    )) {
+      const items = node.children.map(child => flattenInlineText(child as SlimElementNode) as string)
+      if (!items.some(item => item.includes('|'))) {
+        lines[0] = `${linePrefix}${declaration} > ${items.join(' | ')}`
+        emittedColumnar = true
+      } else if (!items.some(item => item.includes(','))) {
+        lines[0] = `${linePrefix}${declaration} > ${items.join(' , ')}`
+        emittedColumnar = true
+      }
+    }
+  }
 
-  if (node.text && node.children.length > 0) {
+  const emittedInlineFromChild =
+    !emittedColumnar && inlineText !== undefined && !node.text && node.children.length === 1
+
+  if (node.text && node.children.length > 0 && !emittedColumnar) {
     const textPrefix = options.useDepthPrefix
       ? `${depth + 1}`
       : options.indent.repeat(depth + 1)
     lines.push(`${textPrefix}| ${node.text}`)
   }
 
-  for (const child of node.children) {
-    if (emittedInlineFromChild && child.type === 'text') {
-      continue
+  if (!emittedColumnar) {
+    for (const child of node.children) {
+      if (emittedInlineFromChild && child.type === 'text') {
+        continue
+      }
+      lines.push(...emitNodeToSlim(child, depth + 1, options, node, effectiveChildDefaults))
     }
-    lines.push(...emitNodeToSlim(child, depth + 1, options, node, effectiveChildDefaults))
   }
 
   return lines
