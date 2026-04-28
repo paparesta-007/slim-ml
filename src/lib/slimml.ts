@@ -2163,7 +2163,7 @@ function resolveEffectiveElementContext(
   parent?: SlimElementNode,
 ): EffectiveElementContext {
   const inherited = getInheritedChildRule(parent, node.tag)
-  const classes = [...node.classes]
+  const classes = [...(node.classes || [])]
   const attrs: Record<string, SlimAttributeValue> = { ...node.attrs }
   let id = node.id
 
@@ -2257,45 +2257,58 @@ function emitNodeToHtml(
   depth: number,
   parent?: SlimElementNode,
 ): string {
-  const indent = '  '.repeat(depth)
+  try {
+    const indent = '  '.repeat(depth)
 
-  if (node.type === 'text') {
-    return `${indent}${escapeHtml(node.value)}\n`
+    if (node.type === 'text') {
+      return `${indent}${escapeHtml(node.value)}\n`
+    }
+
+    const attrs = serializeAttributes(node, parent)
+    const attrSegment = attrs ? ` ${attrs}` : ''
+    const tagName = node.tag
+    const tagIsVoid = VOID_TAGS.has(tagName.toLowerCase())
+
+    if (tagIsVoid) {
+      return `${indent}<${tagName}${attrSegment}>\n`
+    }
+
+    const children = node.children || []
+
+    if (!node.text && children.length === 0) {
+      return `${indent}<${tagName}${attrSegment}></${tagName}>\n`
+    }
+
+    if (node.text && children.length === 0) {
+      return `${indent}<${tagName}${attrSegment}>${escapeHtml(node.text)}</${tagName}>\n`
+    }
+
+    let html = `${indent}<${tagName}${attrSegment}>\n`
+
+    if (node.text) {
+      html += `${'  '.repeat(depth + 1)}${escapeHtml(node.text)}\n`
+    }
+
+    for (const child of children) {
+      html += emitNodeToHtml(child, depth + 1, node)
+    }
+
+    html += `${indent}</${tagName}>\n`
+    return html
+  } catch (err) {
+    const nodeInfo = node.type === 'element' ? `type: ${node.type}, tag: ${node.tag}` : `type: ${node.type}`
+    console.warn(`SlimML: error emitting node (${nodeInfo})`, err)
+    return `<!-- Error emitting node -->\n`
   }
-
-  const attrs = serializeAttributes(node, parent)
-  const attrSegment = attrs ? ` ${attrs}` : ''
-  const tagName = node.tag
-  const tagIsVoid = VOID_TAGS.has(tagName.toLowerCase())
-
-  if (tagIsVoid) {
-    return `${indent}<${tagName}${attrSegment}>\n`
-  }
-
-  if (!node.text && node.children.length === 0) {
-    return `${indent}<${tagName}${attrSegment}></${tagName}>\n`
-  }
-
-  if (node.text && node.children.length === 0) {
-    return `${indent}<${tagName}${attrSegment}>${escapeHtml(node.text)}</${tagName}>\n`
-  }
-
-  let html = `${indent}<${tagName}${attrSegment}>\n`
-
-  if (node.text) {
-    html += `${'  '.repeat(depth + 1)}${escapeHtml(node.text)}\n`
-  }
-
-  for (const child of node.children) {
-    html += emitNodeToHtml(child, depth + 1, node)
-  }
-
-  html += `${indent}</${tagName}>\n`
-  return html
 }
 
 export function compileToHtml(ast: SlimDocument): string {
-  return ast.children.map((node) => emitNodeToHtml(node, 0)).join('').trim()
+  try {
+    return (ast.children || []).map((node) => emitNodeToHtml(node, 0)).join('').trim()
+  } catch (err) {
+    console.warn(`SlimML: error compiling to HTML (${(ast.children || []).length} top-level nodes)`, err)
+    return '<!-- Error compiling to HTML -->'
+  }
 }
 
 function quoteSlimValue(value: string): string {
